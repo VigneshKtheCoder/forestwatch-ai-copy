@@ -1,0 +1,2 @@
+- [leaflet-draw Vite bugs](leaflet-draw-vite-bugs.md) — three known crashes when using leaflet-draw v1.0.4 in Vite ES-module builds; patches required.
+- [Leaflet React SSR init](leaflet-react-ssr-init.md) — safe Leaflet+leaflet-draw initialization pattern for TanStack Start (SSR + Strict Mode).

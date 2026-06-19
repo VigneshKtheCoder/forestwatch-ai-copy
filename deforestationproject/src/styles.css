@@ -136,6 +136,78 @@
   font-size: 10px !important;
 }
 
+/* Leaflet Draw toolbar – professional look */
+.leaflet-draw-toolbar a,
+.leaflet-draw-edit-edit,
+.leaflet-draw-edit-remove {
+  background-color: #fff !important;
+  border-radius: 4px !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+.leaflet-draw-toolbar a:hover,
+.leaflet-draw-edit-edit:hover,
+.leaflet-draw-edit-remove:hover {
+  background-color: #f0f4f0 !important;
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  color: var(--color-forest-deep);
+}
+/* Override leaflet-draw icon spritesheet with inline SVG text labels as fallback */
+.leaflet-draw-draw-polygon { font-size: 0; }
+.leaflet-draw-draw-polygon::after {
+  content: "⬡";
+  font-size: 14px;
+  line-height: 1;
+  color: var(--color-forest-deep);
+}
+.leaflet-draw-draw-rectangle { font-size: 0; }
+.leaflet-draw-draw-rectangle::after {
+  content: "⬜";
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-forest-deep);
+}
+.leaflet-draw-edit-edit { font-size: 0 !important; }
+.leaflet-draw-edit-edit::after {
+  content: "✎";
+  font-size: 15px;
+  line-height: 1;
+  color: var(--color-forest-deep);
+}
+.leaflet-draw-edit-remove { font-size: 0 !important; }
+.leaflet-draw-edit-remove::after {
+  content: "✕";
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-alert);
+}
+/* Leaflet Draw tooltip */
+.leaflet-draw-tooltip {
+  background: var(--color-forest-deep);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.leaflet-draw-tooltip::before { display: none; }
+/* Leaflet control styling */
+.leaflet-control-layers {
+  border-radius: 8px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+  font-size: 12px;
+}
+.leaflet-bar {
+  border-radius: 8px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+  overflow: hidden;
+}
+.leaflet-bar a:first-child { border-radius: 8px 8px 0 0 !important; }
+.leaflet-bar a:last-child  { border-radius: 0 0 8px 8px !important; }
+
 @utility hero-grad {
   background:
     radial-gradient(1200px 600px at 80% -10%, color-mix(in oklab, var(--sage) 50%, transparent), transparent 60%),
