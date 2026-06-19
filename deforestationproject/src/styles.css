@@ -1,0 +1,159 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+
+  --color-forest-deep: var(--forest-deep);
+  --color-forest: var(--forest);
+  --color-moss: var(--moss);
+  --color-sage: var(--sage);
+  --color-earth: var(--earth);
+  --color-sand: var(--sand);
+  --color-alert: var(--alert);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --radius: 0.75rem;
+
+  /* Conservation palette */
+  --forest-deep: oklch(0.32 0.06 155);   /* #1B4332 */
+  --forest: oklch(0.42 0.07 158);        /* #2D6A4F */
+  --moss: oklch(0.55 0.09 158);          /* #40916C */
+  --sage: oklch(0.85 0.08 150);          /* #95D5B2 */
+  --earth: oklch(0.45 0.06 55);          /* #7F5539 */
+  --sand: oklch(0.89 0.07 90);           /* #E9D8A6 */
+  --alert: oklch(0.62 0.20 35);          /* deforestation red */
+
+  --background: oklch(0.995 0.003 100);
+  --foreground: oklch(0.22 0.03 155);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.03 155);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.03 155);
+  --primary: var(--forest-deep);
+  --primary-foreground: oklch(0.98 0.01 100);
+  --secondary: oklch(0.96 0.02 130);
+  --secondary-foreground: var(--forest-deep);
+  --muted: oklch(0.96 0.015 130);
+  --muted-foreground: oklch(0.48 0.03 150);
+  --accent: var(--sage);
+  --accent-foreground: var(--forest-deep);
+  --destructive: var(--alert);
+  --destructive-foreground: oklch(0.98 0.01 100);
+  --border: oklch(0.9 0.02 140);
+  --input: oklch(0.92 0.02 140);
+  --ring: var(--moss);
+
+  --chart-1: var(--forest);
+  --chart-2: var(--moss);
+  --chart-3: var(--sage);
+  --chart-4: var(--earth);
+  --chart-5: var(--alert);
+}
+
+.dark {
+  --background: oklch(0.18 0.02 155);
+  --foreground: oklch(0.96 0.01 100);
+  --card: oklch(0.22 0.025 155);
+  --card-foreground: oklch(0.96 0.01 100);
+  --popover: oklch(0.22 0.025 155);
+  --popover-foreground: oklch(0.96 0.01 100);
+  --primary: var(--sage);
+  --primary-foreground: var(--forest-deep);
+  --secondary: oklch(0.28 0.03 155);
+  --secondary-foreground: oklch(0.96 0.01 100);
+  --muted: oklch(0.28 0.03 155);
+  --muted-foreground: oklch(0.72 0.02 140);
+  --accent: var(--moss);
+  --accent-foreground: oklch(0.98 0.01 100);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: var(--moss);
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html, body { height: 100%; }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Leaflet base */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: var(--color-muted);
+  font-family: var(--font-sans);
+}
+.leaflet-control-attribution {
+  background: rgba(255,255,255,0.85) !important;
+  font-size: 10px !important;
+}
+
+@utility hero-grad {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, color-mix(in oklab, var(--sage) 50%, transparent), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, color-mix(in oklab, var(--moss) 35%, transparent), transparent 60%),
+    linear-gradient(180deg, var(--forest-deep) 0%, oklch(0.26 0.05 155) 100%);
+}
+
+@utility ring-soft {
+  box-shadow:
+    0 1px 0 0 color-mix(in oklab, var(--forest-deep) 6%, transparent),
+    0 10px 30px -12px color-mix(in oklab, var(--forest-deep) 18%, transparent);
+}
+
+@utility ndvi-bar {
+  background: linear-gradient(90deg,
+    oklch(0.55 0.20 30) 0%,
+    oklch(0.75 0.16 70) 25%,
+    oklch(0.85 0.12 110) 50%,
+    oklch(0.70 0.18 140) 75%,
+    oklch(0.45 0.18 155) 100%);
+}
