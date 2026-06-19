@@ -30,7 +30,7 @@ if ((L as any).GeometryUtil) {
 
 ---
 
-## Bug 2 — `TypeError: Cannot read properties of undefined (reading 'enable')` in Edit toolbar
+## Bug 2 — `TypeError: Cannot read properties of undefined (reading 'enable'/'disable')` in Edit/Draw toolbar
 
 **When:** User clicks the Edit button on the draw toolbar when the `drawnItems` FeatureGroup contains layers that were created with `L.geoJSON()`.
 

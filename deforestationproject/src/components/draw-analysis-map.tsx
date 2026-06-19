@@ -88,15 +88,8 @@ export function DrawAnalysisMap({
       localMap.addLayer(drawnItems);
       drawnItemsRef.current = drawnItems;
 
-      // ── Show initial geometry ──
-      const initGeom = geometryRef.current;
-      if (initGeom) {
-        renderAoi(L, drawnItems, initGeom);
-        const bounds = polygonBounds(initGeom);
-        localMap.fitBounds(bounds as any, { padding: [40, 40] });
-      }
-
-      // ── Leaflet Draw ──
+      // ── Leaflet Draw (must load BEFORE rendering any geometry so that
+      //    addInitHook has registered .editing on L.Polygon instances) ──
       if (!cancelled) {
         (window as any).L = L;
         await import("leaflet-draw/dist/leaflet.draw.css");
@@ -165,6 +158,15 @@ export function DrawAnalysisMap({
           localMap.on((L as any).Draw.Event.DELETED, () => {
             onGeometryChangeRef.current?.(null);
           });
+
+          // ── Show initial geometry AFTER leaflet-draw registers its
+          //    addInitHook so L.Polygon instances get .editing ──
+          const initGeom = geometryRef.current;
+          if (initGeom && !cancelled) {
+            renderAoi(L, drawnItems, initGeom);
+            const bounds = polygonBounds(initGeom);
+            localMap.fitBounds(bounds as any, { padding: [40, 40] });
+          }
         }
       }
 
