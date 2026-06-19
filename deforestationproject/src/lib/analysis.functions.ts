@@ -5,7 +5,7 @@
 // References:
 //   STAC API:    https://planetarycomputer.microsoft.com/api/stac/v1
 //   Data API:    https://planetarycomputer.microsoft.com/api/data/v1
-//   Collection:  sentinel-2-l2a (https://planetarycomputer.microsoft.com/dataset/sentinel-2-l2a)
+//   Collection:  sentinel-2-l2a
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -21,7 +21,7 @@ const PolygonSchema = z.object({
 
 const InputSchema = z.object({
   geometry: PolygonSchema,
-  beforeStart: z.string().min(8), // YYYY-MM-DD
+  beforeStart: z.string().min(8),
   beforeEnd: z.string().min(8),
   afterStart: z.string().min(8),
   afterEnd: z.string().min(8),
@@ -70,18 +70,21 @@ async function stacSearch(
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`STAC search failed (${res.status}): ${await res.text().catch(() => "")}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`STAC search failed (HTTP ${res.status}). Check your date range and area. Detail: ${text.slice(0, 300)}`);
   }
   const data = await res.json() as { features?: StacItem[] };
   if (!data.features?.length) {
     throw new Error(
-      `No Sentinel-2 L2A scene found ${start}..${end} with cloud cover < ${maxCloud}% intersecting the AOI. Try a wider date window or a higher cloud threshold.`,
+      `No Sentinel-2 scene found between ${start} and ${end} with cloud cover < ${maxCloud}% over your AOI. ` +
+      `Try widening the date window to 60–90 days, raising the cloud threshold, or choosing a different area.`,
     );
   }
   return data.features[0];
 }
 
 async function ndviStatistics(itemId: string, geometry: Polygon): Promise<TitilerStats> {
+  // Build URL using multi-value params where FastAPI/titiler expects lists.
   const url = new URL(`${DATA}/item/statistics`);
   url.searchParams.set("collection", "sentinel-2-l2a");
   url.searchParams.set("item", itemId);
@@ -89,43 +92,72 @@ async function ndviStatistics(itemId: string, geometry: Polygon): Promise<Titile
   url.searchParams.append("assets", "B08");
   url.searchParams.set("expression", "(B08-B04)/(B08+B04)");
   url.searchParams.set("asset_as_band", "true");
-  url.searchParams.set("max_size", "1024");
+  url.searchParams.set("max_size", "512");
   url.searchParams.set("categorical", "false");
   url.searchParams.set("histogram_bins", "20");
-  url.searchParams.set("histogram_range", "-1,1");
-  const res = await fetch(url, {
+  // histogram_range must be two separate params, not comma-separated
+  url.searchParams.append("histogram_range", "-1");
+  url.searchParams.append("histogram_range", "1");
+
+  const res = await fetch(url.toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type: "Feature", geometry, properties: {} }),
   });
+
   if (!res.ok) {
-    throw new Error(`Statistics call failed (${res.status}): ${await res.text().catch(() => "")}`);
+    const text = await res.text().catch(() => "");
+    // Surface readable error to the user
+    let detail = text.slice(0, 400);
+    try {
+      const j = JSON.parse(text);
+      if (j?.detail) detail = JSON.stringify(j.detail).slice(0, 400);
+    } catch { /* ignore */ }
+    throw new Error(
+      `Satellite statistics call failed (HTTP ${res.status}) for scene "${itemId}". ` +
+      `This may be a temporary Planetary Computer outage. Detail: ${detail}`,
+    );
   }
+
   const json = await res.json() as any;
-  // titiler-pc nests stats under properties.statistics; some deployments
-  // return the bare {expression: stats} map. Handle both.
-  const bag: Record<string, TitilerStats> =
-    (json?.properties?.statistics as Record<string, TitilerStats> | undefined)
-    ?? (json as Record<string, TitilerStats>);
+
+  // Titiler-PC nests stats under properties.statistics or as bare {expression: stats}
+  let bag: Record<string, TitilerStats>;
+  if (json?.properties?.statistics) {
+    bag = json.properties.statistics as Record<string, TitilerStats>;
+  } else if (json && typeof json === "object" && !Array.isArray(json)) {
+    bag = json as Record<string, TitilerStats>;
+  } else {
+    throw new Error(`Unexpected statistics response format from Planetary Computer. Scene: ${itemId}`);
+  }
+
   const stats = Object.values(bag)[0];
-  if (!stats) throw new Error("Titiler returned no statistics body");
+  if (!stats || typeof stats.mean !== "number") {
+    throw new Error(
+      `Planetary Computer returned an empty or invalid statistics body for scene "${itemId}". ` +
+      `The scene may have too many clouds, or the AOI may fall outside the scene footprint.`
+    );
+  }
+
+  // Ensure histogram is present (some titiler versions omit it on tiny AOIs)
+  if (!Array.isArray(stats.histogram) || stats.histogram.length < 2) {
+    stats.histogram = [Array(20).fill(0), Array.from({ length: 21 }, (_, i) => -1 + i * 0.1)];
+  }
+
   return stats;
 }
 
-/** Fraction of valid pixels whose NDVI is >= threshold, from the histogram. */
 function forestFraction(stats: TitilerStats, threshold: number): number {
   const [counts, edges] = stats.histogram;
   let total = 0, above = 0;
   for (let i = 0; i < counts.length; i++) {
     total += counts[i];
-    // bin covers [edges[i], edges[i+1]); count as "forested" if bin center >= threshold
     const center = (edges[i] + edges[i + 1]) / 2;
     if (center >= threshold) above += counts[i];
   }
   return total > 0 ? above / total : 0;
 }
 
-/** 0–1 confidence: more valid pixels & lower cloud cover → higher confidence. */
 function confidence(
   before: TitilerStats, after: TitilerStats,
   beforeItem: StacItem, afterItem: StacItem,
