@@ -102,50 +102,64 @@ export function ndviColor(v: number) {
   return "#1B4332";
 }
 
-const PC_TILE = "https://planetarycomputer.microsoft.com/api/data/v1/item/tiles/WebMercatorQuad/{z}/{x}/{y}@1x";
+// Tile & preview URL builders — Earth Search STAC + Titiler.xyz
+// Earth Search Sentinel-2 L2A items live at:
+//   https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/{id}
+// Titiler.xyz is a public Titiler instance backed by the same sentinel-cogs S3 bucket.
+
+const EARTH_SEARCH = "https://earth-search.aws.element84.com/v1";
+const COLLECTION = "sentinel-2-l2a";
+const TITILER = "https://titiler.xyz";
+const TILE_PATH = `${TITILER}/stac/tiles/WebMercatorQuad/{z}/{x}/{y}@1x`;
+
+function esItemUrl(itemId: string) {
+  return `${EARTH_SEARCH}/collections/${COLLECTION}/items/${itemId}`;
+}
 
 export function trueColorTileUrl(itemId: string): string {
-  const u = new URL(PC_TILE);
-  u.searchParams.set("collection", "sentinel-2-l2a");
-  u.searchParams.set("item", itemId);
-  u.searchParams.set("assets", "visual");
-  u.searchParams.set("asset_as_band", "true");
-  return decodeURIComponent(u.toString());
+  const p = new URLSearchParams();
+  p.set("url", esItemUrl(itemId));
+  p.append("assets", "B04");
+  p.append("assets", "B03");
+  p.append("assets", "B02");
+  p.set("asset_as_band", "true");
+  p.set("rescale", "0,3000");
+  return `${TILE_PATH}?${p.toString()}`;
 }
 
 export function ndviTileUrl(itemId: string): string {
-  const u = new URL(PC_TILE);
-  u.searchParams.set("collection", "sentinel-2-l2a");
-  u.searchParams.append("assets", "B04");
-  u.searchParams.append("assets", "B08");
-  u.searchParams.set("item", itemId);
-  u.searchParams.set("expression", "(B08-B04)/(B08+B04)");
-  u.searchParams.set("asset_as_band", "true");
-  u.searchParams.set("rescale", "-1,1");
-  u.searchParams.set("colormap_name", "rdylgn");
-  return decodeURIComponent(u.toString());
+  const p = new URLSearchParams();
+  p.set("url", esItemUrl(itemId));
+  p.append("assets", "B04");
+  p.append("assets", "B08");
+  p.set("expression", "(B08-B04)/(B08+B04)");
+  p.set("asset_as_band", "true");
+  p.set("rescale", "-1,1");
+  p.set("colormap_name", "rdylgn");
+  return `${TILE_PATH}?${p.toString()}`;
 }
 
 export function ndviPreviewPngUrl(itemId: string): string {
-  const u = new URL("https://planetarycomputer.microsoft.com/api/data/v1/item/preview.png");
-  u.searchParams.set("collection", "sentinel-2-l2a");
-  u.searchParams.set("item", itemId);
-  u.searchParams.append("assets", "B04");
-  u.searchParams.append("assets", "B08");
-  u.searchParams.set("expression", "(B08-B04)/(B08+B04)");
-  u.searchParams.set("asset_as_band", "true");
-  u.searchParams.set("rescale", "-1,1");
-  u.searchParams.set("colormap_name", "rdylgn");
-  u.searchParams.set("max_size", "1024");
-  return decodeURIComponent(u.toString());
+  const p = new URLSearchParams();
+  p.set("url", esItemUrl(itemId));
+  p.append("assets", "B04");
+  p.append("assets", "B08");
+  p.set("expression", "(B08-B04)/(B08+B04)");
+  p.set("asset_as_band", "true");
+  p.set("rescale", "-1,1");
+  p.set("colormap_name", "rdylgn");
+  p.set("max_size", "1024");
+  return `${TITILER}/stac/preview.png?${p.toString()}`;
 }
 
 export function trueColorPreviewPngUrl(itemId: string): string {
-  const u = new URL("https://planetarycomputer.microsoft.com/api/data/v1/item/preview.png");
-  u.searchParams.set("collection", "sentinel-2-l2a");
-  u.searchParams.set("item", itemId);
-  u.searchParams.set("assets", "visual");
-  u.searchParams.set("asset_as_band", "true");
-  u.searchParams.set("max_size", "1024");
-  return decodeURIComponent(u.toString());
+  const p = new URLSearchParams();
+  p.set("url", esItemUrl(itemId));
+  p.append("assets", "B04");
+  p.append("assets", "B03");
+  p.append("assets", "B02");
+  p.set("asset_as_band", "true");
+  p.set("rescale", "0,3000");
+  p.set("max_size", "1024");
+  return `${TITILER}/stac/preview.png?${p.toString()}`;
 }
