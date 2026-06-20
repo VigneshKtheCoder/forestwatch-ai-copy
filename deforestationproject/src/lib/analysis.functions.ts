@@ -111,9 +111,8 @@ async function ndviStatistics(item: EsItem, geometry: Polygon): Promise<TitilerS
   url.searchParams.set("asset_as_band", "true");
   url.searchParams.set("max_size", "512");
   url.searchParams.set("histogram_bins", "20");
-  // histogram_range as two separate params (FastAPI list convention)
-  url.searchParams.append("histogram_range", "-1");
-  url.searchParams.append("histogram_range", "1");
+  // Titiler.xyz expects histogram_range as a single comma-separated string: "-1,1"
+  url.searchParams.set("histogram_range", "-1,1");
 
   const res = await fetch(url.toString(), {
     method: "POST",

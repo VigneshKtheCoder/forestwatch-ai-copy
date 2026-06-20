@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
-import { NdviTile, NdviLegend } from "@/components/ndvi-tile";
+import { SatelliteViewer } from "@/components/satellite-viewer";
 import {
   ArrowRight, Satellite, LineChart, ShieldCheck, FileDown,
   Globe2, Trees, TrendingDown, Eye, Clock, MapPin,
@@ -76,54 +76,12 @@ function Landing() {
             </dl>
           </div>
 
-          {/* Right: satellite comparison viewer */}
+          {/* Right: real satellite comparison viewer */}
           <div className="flex flex-col justify-center">
-            <div className="ring-soft rounded-2xl border border-white/10 bg-black/30 p-5 backdrop-blur">
-              {/* Header row */}
-              <div className="mb-3 flex items-center justify-between text-xs text-white/70">
-                <span className="font-medium">Rondônia Corridor · Brazil</span>
-                <span className="font-mono text-[11px] text-white/40">10°50′S 63°20′W</span>
-              </div>
-
-              {/* NDVI before/after tiles */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="relative">
-                  <NdviTile seed={2} decline={0.05} label="2019 · Before" size={256} cells={52} />
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/80 font-mono">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span> NDVI 0.81
-                  </div>
-                </div>
-                <div className="relative">
-                  <NdviTile seed={2} decline={0.58} label="2024 · After" size={256} cells={52} />
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/80 font-mono">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-400"></span> NDVI 0.54
-                  </div>
-                </div>
-              </div>
-
-              {/* Footer row: legend + result badge */}
-              <div className="mt-4 flex items-center justify-between gap-4">
-                <NdviLegend />
-                <div className="shrink-0 rounded-md bg-alert/90 px-2.5 py-1.5 text-center text-[11px] font-medium leading-tight text-white">
-                  <div>−0.27 ΔNDVI</div>
-                  <div className="text-white/75">18,420 ha lost</div>
-                </div>
-              </div>
-
-              {/* Change detection annotation strip */}
-              <div className="mt-3 flex items-center gap-2 rounded-md bg-white/5 px-3 py-2 text-[11px] text-white/60">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-alert/80" />
-                <span>
-                  <strong className="text-white/80">Deforestation detected</strong> in south-east quadrant ·
-                  Clearcut pattern consistent with agricultural expansion
-                </span>
-              </div>
-            </div>
-
-            {/* Dataset badge */}
-            <div className="mt-3 flex items-center gap-2 text-[11px] text-white/40 justify-end">
+            <SatelliteViewer />
+            <div className="mt-2.5 flex items-center justify-end gap-1.5 text-[10px] text-white/35">
               <Satellite className="h-3 w-3" />
-              Sentinel-2 L2A · ESA Copernicus Open Access Hub · NDVI (B8–B4)/(B8+B4)
+              Sentinel-2 L2A · ESRI World Imagery · NDVI (B8−B4)/(B8+B4)
             </div>
           </div>
         </div>
