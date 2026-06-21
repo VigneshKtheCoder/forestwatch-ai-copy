@@ -22,7 +22,7 @@ import { downloadText, toCsv, polygonAreaHa, type Polygon } from "@/lib/geo";
 export const Route = createFileRoute("/analyze")({
   head: () => ({
     meta: [
-      { title: "Run an Analysis · ForestWatch AI" },
+      { title: "Run an Analysis · Retreeval" },
       { name: "description", content: "Draw your area of interest on the map, choose two date windows, and run a live Sentinel-2 NDVI forest-change analysis." },
     ],
   }),
@@ -896,7 +896,7 @@ function exportPdf(r: AnalysisResult) {
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>ForestWatch AI — Analysis Report</title>
+<title>Retreeval — Analysis Report</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #1a1a1a; background: #fff; padding: 32px 40px; }
@@ -939,7 +939,7 @@ function exportPdf(r: AnalysisResult) {
 <body>
 <div class="header">
   <div>
-    <div class="logo">ForestWatch <span>AI</span></div>
+    <div class="logo">Retreeval <span>AI</span></div>
     <div style="font-size:11px;color:#666;margin-top:3px">Sentinel-2 L2A · NDVI Deforestation Analysis Report</div>
   </div>
   <div class="meta">
@@ -1016,7 +1016,7 @@ function exportPdf(r: AnalysisResult) {
 </table>
 
 <div class="footer">
-  <span>ForestWatch AI · Sentinel-2 L2A via Element84 Earth Search · Statistics via Titiler.xyz</span>
+  <span>Retreeval · Sentinel-2 L2A via Element84 Earth Search · Statistics via Titiler.xyz</span>
   <span>NDVI = (B8 − B4) / (B8 + B4) · Forest threshold NDVI ≥ ${r.forestThreshold.toFixed(2)}</span>
 </div>
 
@@ -1063,9 +1063,9 @@ function DownloadStrip({ r }: { r: AnalysisResult }) {
       count_after:  r.after.stats.histogram.counts[i] ?? 0,
     }));
     const csv =
-      "# ForestWatch AI — Sentinel-2 L2A NDVI Analysis\n" +
+      "# Retreeval — Sentinel-2 L2A NDVI Analysis\n" +
       toCsv(meta) + "\n\n" + toCsv(histRows);
-    downloadText(`forestwatch-${r.computedAt.slice(0, 10)}.csv`, csv, "text/csv");
+    downloadText(`retreeval-${r.computedAt.slice(0, 10)}.csv`, csv, "text/csv");
   }
 
   return (

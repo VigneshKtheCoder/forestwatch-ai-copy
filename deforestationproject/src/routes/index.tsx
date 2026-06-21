@@ -10,9 +10,9 @@ import {
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "ForestWatch AI · Satellite deforestation monitoring for conservation" },
+      { title: "Retreeval · Satellite deforestation monitoring for conservation" },
       { name: "description", content: "Detect, measure and report forest loss anywhere on Earth using Sentinel-2 imagery, NDVI change detection and ML — built for nonprofits, researchers and agencies." },
-      { property: "og:title", content: "ForestWatch AI" },
+      { property: "og:title", content: "Retreeval" },
       { property: "og:description", content: "Open satellite intelligence for the organizations protecting the world's forests." },
     ],
   }),
@@ -41,7 +41,7 @@ function Landing() {
             </h1>
 
             <p className="mt-6 max-w-lg text-base leading-relaxed text-white/75">
-              ForestWatch AI turns free European Space Agency imagery into hectare-accurate
+              Retreeval turns free European Space Agency imagery into hectare-accurate
               deforestation evidence — for nonprofits, researchers and government agencies
               defending the world's last intact ecosystems.
             </p>
@@ -166,11 +166,11 @@ function Landing() {
         </div>
       </section>
 
-      {/* ── How ForestWatch Works ─────────────────────────────────── */}
+      {/* ── How Retreeval Works ─────────────────────────────────── */}
       <section className="mx-auto max-w-7xl px-6 py-24">
         <div className="max-w-2xl">
           <p className="text-xs uppercase tracking-[0.18em] text-moss">Workflow</p>
-          <h2 className="mt-3 text-4xl">How ForestWatch Works</h2>
+          <h2 className="mt-3 text-4xl">How Retreeval Works</h2>
           <p className="mt-4 text-muted-foreground">
             From satellite archive to publication-ready deforestation report — in minutes,
             not months. No GIS expertise required.
@@ -304,7 +304,7 @@ function Landing() {
             <p className="text-xs uppercase tracking-[0.18em] text-moss">Methodology</p>
             <h2 className="mt-3 text-3xl">Scientifically defensible by default.</h2>
             <p className="mt-4 max-w-md text-muted-foreground">
-              Every metric ForestWatch produces is reproducible from raw Sentinel-2 L2A imagery
+              Every metric Retreeval produces is reproducible from raw Sentinel-2 L2A imagery
               using the same equations cited by the USGS and ESA — so your evidence holds up
               in court, in grant applications, and in policy hearings.
             </p>
@@ -334,7 +334,7 @@ function Landing() {
       {/* ── Who it's for ─────────────────────────────────────────── */}
       <section className="mx-auto max-w-7xl px-6 py-24">
         <div className="text-center max-w-2xl mx-auto mb-12">
-          <p className="text-xs uppercase tracking-[0.18em] text-moss">Who Uses ForestWatch</p>
+          <p className="text-xs uppercase tracking-[0.18em] text-moss">Who Uses Retreeval</p>
           <h2 className="mt-3 text-4xl">Built for the organizations that matter.</h2>
         </div>
         <div className="grid gap-6 sm:grid-cols-3">
@@ -383,7 +383,7 @@ function Landing() {
             If you're protecting a forest,<br />we'll help you prove what's happening to it.
           </h2>
           <p className="mx-auto mt-5 max-w-xl text-muted-foreground">
-            ForestWatch AI is free for accredited environmental nonprofits, academic researchers
+            Retreeval is free for accredited environmental nonprofits, academic researchers
             and public agencies. No account needed to run your first analysis.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">

@@ -4,8 +4,8 @@ import { SiteHeader, SiteFooter } from "@/components/site-header";
 export const Route = createFileRoute("/methodology")({
   head: () => ({
     meta: [
-      { title: "Methodology · ForestWatch AI" },
-      { name: "description", content: "How ForestWatch AI fetches Sentinel-2 L2A imagery, computes NDVI, estimates hectare loss and scores confidence." },
+      { title: "Methodology · Retreeval" },
+      { name: "description", content: "How Retreeval fetches Sentinel-2 L2A imagery, computes NDVI, estimates hectare loss and scores confidence." },
     ],
   }),
   component: Methodology,
@@ -97,7 +97,7 @@ lossHa       = lossFraction × areaHa(AOI)
           <ul className="mt-3 list-disc space-y-2 pl-6 leading-relaxed text-muted-foreground">
             <li>Single-scene comparison; no multi-scene compositing yet. A persistently cloudy AOI may return an unrepresentative scene.</li>
             <li>NDVI cannot distinguish forest from other dense vegetation (e.g. mature plantations). Cross-checking with
-              <a className="text-moss hover:text-forest-deep" href="https://data.globalforestwatch.org" target="_blank" rel="noreferrer"> Global Forest Watch</a> and
+              <a className="text-moss hover:text-forest-deep" href="https://data.globalretreeval.org" target="_blank" rel="noreferrer"> Global Forest Watch</a> and
               <a className="text-moss hover:text-forest-deep" href="https://glad.earthengine.app/view/global-forest-change" target="_blank" rel="noreferrer"> Hansen Global Forest Change</a> is recommended for definitive loss attribution.
             </li>
             <li>Sentinel-2 L2A coverage starts March 2017 globally; before that, no data will be returned.</li>

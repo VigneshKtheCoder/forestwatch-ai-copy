@@ -20,7 +20,7 @@ import type { ReactNode } from "react";
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
     meta: [
-      { title: "Monitoring Dashboard · ForestWatch AI" },
+      { title: "Monitoring Dashboard · Retreeval" },
       { name: "description", content: "Live deforestation monitoring across tracked regions: NDVI trends, alerts, land cover and impact metrics." },
     ],
   }),

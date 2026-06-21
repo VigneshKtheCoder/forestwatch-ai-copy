@@ -204,43 +204,43 @@ async function tryNdviStats(
 }
 
 // ─── Synthetic fallback ───────────────────────────────────────────────────────
-// If every scene fails, synthesise plausible statistics so the UI always shows a result.
-// The synthetic values are based on typical Amazon NDVI characteristics.
-function syntheticStats(
-  mean: number,
-  label: "before" | "after",
-): TitilerStats {
-  const std = 0.12;
+// Used ONLY when every real Titiler call fails (e.g. no Sentinel-2 coverage at all).
+// Both before and after use the SAME neutral distribution so that no artificial
+// forest-loss is reported when we have no real data to work with.
+// Mean 0.65 ≈ typical mixed-forest/savanna NDVI; std 0.20 gives a realistic spread.
+function syntheticStats(label: "before" | "after"): TitilerStats {
+  const mean = 0.65;
+  const std  = 0.20;
   const counts = Array.from({ length: 20 }, (_, i) => {
     const center = -1 + i * 0.1 + 0.05;
     const z = (center - mean) / std;
-    return Math.max(0, Math.round(500 * Math.exp(-0.5 * z * z)));
+    return Math.max(0, Math.round(600 * Math.exp(-0.5 * z * z)));
   });
   const edges = Array.from({ length: 21 }, (_, i) => +((-1 + i * 0.1).toFixed(2)));
   return {
-    min:  +(mean - 0.35).toFixed(3),
-    max:  +(mean + 0.20).toFixed(3),
-    mean: +mean.toFixed(3),
+    min:  0.200,
+    max:  0.920,
+    mean: mean,
     std,
-    valid_pixels:  label === "before" ? 48000 : 44000,
-    masked_pixels: label === "before" ? 2000  : 6000,
+    valid_pixels:  label === "before" ? 32000 : 30000,
+    masked_pixels: label === "before" ? 3000  : 5000,
     histogram: [counts, edges],
   };
 }
 
 // Try each candidate in order; fall back to synthetic if all fail.
+// NOTE: synthetic stats are identical for before and after so that loss = 0
+// when no real satellite data is available — preventing false positives.
 async function getNdviStats(
   candidates: EsItem[],
   geometry: Polygon,
-  syntheticMean: number,
   label: "before" | "after",
-): Promise<{ stats: TitilerStats; item: EsItem | null }> {
+): Promise<{ stats: TitilerStats; item: EsItem | null; synthetic: boolean }> {
   for (const item of candidates) {
     const stats = await tryNdviStats(item, geometry);
-    if (stats) return { stats, item };
+    if (stats) return { stats, item, synthetic: false };
   }
-  // All candidates failed — use synthetic
-  return { stats: syntheticStats(syntheticMean, label), item: null };
+  return { stats: syntheticStats(label), item: null, synthetic: true };
 }
 
 // ─── Forest fraction from histogram ──────────────────────────────────────────
@@ -285,12 +285,14 @@ export const runNdviAnalysis = createServerFn({ method: "POST" })
       findCandidates(data.geometry, data.afterStart,  data.afterEnd,  data.maxCloud),
     ]);
 
-    // 2. Get stats — tries every candidate, synthetic if all fail
-    const [{ stats: beforeStats, item: beforeItem }, { stats: afterStats, item: afterItem }] =
-      await Promise.all([
-        getNdviStats(beforeCandidates, data.geometry, 0.75, "before"),
-        getNdviStats(afterCandidates,  data.geometry, 0.52, "after"),
-      ]);
+    // 2. Get stats — tries every candidate, synthetic (zero-loss) if all fail
+    const [
+      { stats: beforeStats, item: beforeItem, synthetic: beforeSynthetic },
+      { stats: afterStats,  item: afterItem,  synthetic: afterSynthetic  },
+    ] = await Promise.all([
+      getNdviStats(beforeCandidates, data.geometry, "before"),
+      getNdviStats(afterCandidates,  data.geometry, "after"),
+    ]);
 
     // 3. Derive results
     const areaHa       = polygonAreaHa(data.geometry);
@@ -335,6 +337,7 @@ export const runNdviAnalysis = createServerFn({ method: "POST" })
       confidence:    confidence(beforeStats, afterStats, beforeItem, afterItem),
       forestThreshold: data.forestThreshold,
       computedAt:    new Date().toISOString(),
+      estimated:     beforeSynthetic || afterSynthetic,
     };
   });
 

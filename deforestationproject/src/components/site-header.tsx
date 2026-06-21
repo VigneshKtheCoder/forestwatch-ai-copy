@@ -10,7 +10,7 @@ export function SiteHeader() {
             <Leaf className="h-4 w-4" />
           </span>
           <span className="font-display text-lg tracking-tight">
-            ForestWatch <span className="text-moss">AI</span>
+            Retreeval
           </span>
         </Link>
         <nav className="hidden items-center gap-7 text-sm text-muted-foreground md:flex">
@@ -37,7 +37,7 @@ export function SiteFooter() {
         <div>
           <div className="flex items-center gap-2">
             <span className="grid h-7 w-7 place-items-center rounded-md bg-forest-deep text-primary-foreground"><Leaf className="h-3.5 w-3.5" /></span>
-            <span className="font-display">ForestWatch AI</span>
+            <span className="font-display">Retreeval</span>
           </div>
           <p className="mt-3 text-sm text-muted-foreground">Open satellite intelligence for the organizations protecting the world's forests.</p>
         </div>
@@ -62,12 +62,12 @@ export function SiteFooter() {
           <ul className="space-y-1.5 text-muted-foreground">
             <li>For nonprofits & research</li>
             <li>Free for conservation use</li>
-            <li>contact@forestwatch.ai</li>
+            <li>contact@retreeval.ai</li>
           </ul>
         </div>
       </div>
       <div className="border-t border-border/70 py-4 text-center text-xs text-muted-foreground">
-        © 2026 ForestWatch AI · Built on open Earth observation data
+        © 2026 Retreeval · Built on open Earth observation data
       </div>
     </footer>
   );
