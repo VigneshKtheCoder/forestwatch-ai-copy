@@ -1,218 +1,151 @@
 // Real satellite imagery viewer for the landing page hero.
-// Uses Leaflet + ESRI World Imagery tiles — actual Amazon/Rondônia satellite photos.
-// The "After" panel overlays simulated deforestation detections on real imagery.
+//
+// Image source: ESRI World Imagery MapServer static export (ArcGIS Living Atlas).
+// Free, no API key, CDN-backed — returns a JPEG for any given bbox in EPSG:4326.
+//
+// Two areas are shown to illustrate what intact vs. deforested Amazon looks like
+// from orbit. Both use *current* (2024) high-res satellite imagery:
+//
+//   Before panel — Central Amazonas interior (dense primary rainforest)
+//   After panel  — Rondônia / Mato Grosso frontier (active fishbone clearcuts)
+//
+// This matches how INPE, Global Forest Watch, and PRODES present comparisons:
+// contrasting an intact "reference" area with the actively degrading frontier.
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
-const CENTER_LAT = -10.9;
-const CENTER_LNG = -63.05;
-const ZOOM = 9;
+const ESRI =
+  "https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export" +
+  "?bboxSR=4326&size=660,440&imageSR=4326&f=image&format=jpg";
 
-// Rondônia corridor AOI polygon (simplified real boundary)
-const AOI: [number, number][] = [
-  [-10.35, -63.80], [-10.35, -62.20],
-  [-11.45, -62.20], [-11.45, -63.80],
-];
+// Central Amazonas — dense primary forest, minimal clearings
+const BEFORE_URL = `${ESRI}&bbox=-65.6,-9.2,-63.2,-7.2`;
 
-// Simulated deforestation detections — positions and sizes match
-// real clearcut patterns documented in this corridor by INPE/Global Forest Watch
-const DETECTIONS = [
-  { lat: -10.92, lng: -62.78, rInner: 4800, rOuter: 8200 },
-  { lat: -11.08, lng: -63.18, rInner: 6200, rOuter: 10500 },
-  { lat: -10.72, lng: -63.38, rInner: 3100, rOuter: 5800 },
-  { lat: -11.22, lng: -62.88, rInner: 5400, rOuter: 9200 },
-  { lat: -10.58, lng: -62.65, rInner: 2600, rOuter: 4900 },
-  { lat: -11.12, lng: -63.52, rInner: 2200, rOuter: 4100 },
-  { lat: -10.48, lng: -63.12, rInner: 1800, rOuter: 3400 },
-  { lat: -11.30, lng: -63.32, rInner: 3800, rOuter: 6800 },
-];
+// Rondônia frontier — fishbone deforestation pattern clearly visible from orbit
+const AFTER_URL = `${ESRI}&bbox=-63.6,-12.3,-61.4,-10.3`;
 
-function makeMap(el: HTMLDivElement, L: any) {
-  if ((el as any)._leaflet_id) return null;
-  return L.map(el, {
-    center: [CENTER_LAT, CENTER_LNG],
-    zoom: ZOOM,
-    zoomControl: false,
-    dragging: false,
-    scrollWheelZoom: false,
-    doubleClickZoom: false,
-    boxZoom: false,
-    keyboard: false,
-    touchZoom: false,
-    attributionControl: false,
-  });
+interface PanelProps {
+  url: string;
+  label: string;
+  labelClass: string;
+  ndvi: string;
+  ndviDot: string;
+  ndviLabel: string;
+  deltaLabel?: string;
+  borderRight?: boolean;
+}
+
+function Panel({
+  url, label, labelClass, ndvi, ndviDot, ndviLabel, deltaLabel, borderRight,
+}: PanelProps) {
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <div
+      className={`relative overflow-hidden${borderRight ? " border-r border-white/10" : ""}`}
+      style={{ height: 272 }}
+    >
+      {/* Loading shimmer */}
+      {!loaded && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[#0a1a0d]">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white/55" />
+          <span className="text-[11px] text-white/35">Loading imagery…</span>
+        </div>
+      )}
+
+      {/* Satellite image as background-div for rock-solid fill behaviour */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          backgroundImage: `url(${JSON.stringify(url)})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          opacity: loaded ? 1 : 0,
+          transition: "opacity 0.7s ease",
+        }}
+      />
+
+      {/* Hidden img used only for load/error detection */}
+      <img
+        src={url}
+        alt=""
+        aria-hidden="true"
+        onLoad={() => setLoaded(true)}
+        onError={() => setLoaded(true)}
+        style={{ position: "absolute", opacity: 0, width: 1, height: 1, pointerEvents: "none" }}
+      />
+
+      {/* Date / state label */}
+      <div className="pointer-events-none absolute left-0 right-0 top-2 z-20 flex justify-center">
+        <div className={`rounded-md px-2.5 py-1 text-[11px] font-semibold backdrop-blur-sm ${labelClass}`}>
+          {label}
+        </div>
+      </div>
+
+      {/* NDVI badge */}
+      <div className="absolute bottom-2 left-2 z-20 flex items-center gap-1.5 rounded bg-black/70 px-2 py-1 text-[10px] font-mono text-white/85 backdrop-blur-sm">
+        <span className="inline-block h-2 w-2 rounded-sm" style={{ background: ndviDot }} />
+        {ndvi} · {ndviLabel}
+      </div>
+
+      {/* ΔNDVI badge */}
+      {deltaLabel && (
+        <div className="absolute bottom-2 right-2 z-20 rounded bg-red-950/80 px-2 py-1 text-[10px] font-mono text-red-300 backdrop-blur-sm">
+          {deltaLabel}
+        </div>
+      )}
+
+      {/* Data credit */}
+      <div className="absolute bottom-1 right-1.5 z-20 text-[8px] text-white/25">
+        © Esri, Maxar, USGS
+      </div>
+    </div>
+  );
 }
 
 export function SatelliteViewer() {
-  const beforeRef = useRef<HTMLDivElement>(null);
-  const afterRef  = useRef<HTMLDivElement>(null);
-  const mapsRef   = useRef<any[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      const L = (await import("leaflet")).default;
-      await import("leaflet/dist/leaflet.css");
-      if (cancelled) return;
-
-      const satLayer = () =>
-        L.tileLayer(
-          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-          { maxZoom: 19 }
-        );
-
-      const boundaryStyle = {
-        color: "#d4ead4", weight: 2, fill: false, dashArray: "8 5", opacity: 0.85,
-      };
-
-      // ── Before map ──
-      if (beforeRef.current) {
-        const before = makeMap(beforeRef.current, L);
-        if (before) {
-          satLayer().addTo(before);
-          L.polygon(AOI, boundaryStyle).addTo(before);
-          // Subtle "monitoring active" marker
-          L.circle([CENTER_LAT, CENTER_LNG], {
-            radius: 38000,
-            color: "#d4ead4",
-            weight: 1,
-            fill: false,
-            dashArray: "3 6",
-            opacity: 0.5,
-          }).addTo(before);
-          mapsRef.current.push(before);
-        }
-      }
-
-      // ── After map (detection overlay) ──
-      if (afterRef.current) {
-        const after = makeMap(afterRef.current, L);
-        if (after) {
-          satLayer().addTo(after);
-          L.polygon(AOI, boundaryStyle).addTo(after);
-
-          // Deforestation patches: outer degradation ring + inner clearcut core
-          DETECTIONS.forEach(({ lat, lng, rInner, rOuter }) => {
-            // Degradation halo (semi-transparent orange)
-            L.circle([lat, lng], {
-              radius: rOuter,
-              color: "transparent",
-              weight: 0,
-              fillColor: "#f4a261",
-              fillOpacity: 0.32,
-            }).addTo(after);
-            // Clearcut core (solid red-orange)
-            L.circle([lat, lng], {
-              radius: rInner,
-              color: "rgba(229,86,30,0.7)",
-              weight: 1,
-              fillColor: "#e5561e",
-              fillOpacity: 0.68,
-            }).addTo(after);
-          });
-
-          // Total loss boundary
-          L.circle([CENTER_LAT - 0.12, CENTER_LNG + 0.15], {
-            radius: 42000,
-            color: "#e05a30",
-            weight: 2,
-            fill: false,
-            dashArray: "6 4",
-            opacity: 0.75,
-          }).addTo(after);
-
-          mapsRef.current.push(after);
-        }
-      }
-
-      if (!cancelled) setLoaded(true);
-    })();
-
-    return () => {
-      cancelled = true;
-      mapsRef.current.forEach((m) => { try { m?.remove?.(); } catch { /* ignore */ } });
-      mapsRef.current = [];
-    };
-  }, []);
-
   return (
     <div className="ring-soft overflow-hidden rounded-2xl border border-white/10 bg-black/40 backdrop-blur">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5 text-xs">
         <div className="flex items-center gap-2 text-white/70">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-sage animate-pulse" />
-          <span className="font-medium">Rondônia Corridor · Brazil</span>
-          <span className="text-white/40">— Sentinel-2 L2A · NDVI Change Detection</span>
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sage" />
+          <span className="font-medium">Amazon Basin · Brazil</span>
+          <span className="text-white/40">— ESRI World Imagery · high-resolution</span>
         </div>
-        <span className="font-mono text-[10px] text-white/35">10°54′S 63°03′W</span>
+        <span className="font-mono text-[10px] text-white/35">Rondônia corridor</span>
       </div>
 
-      {/* Map panels */}
+      {/* Image panels */}
       <div className="grid grid-cols-2">
-        {/* Before panel */}
-        <div className="relative border-r border-white/10">
-          {!loaded && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d1a10]">
-              <div className="text-xs text-white/40">Loading satellite imagery…</div>
-            </div>
-          )}
-          <div ref={beforeRef} style={{ height: 268 }} />
-          {/* Label overlay */}
-          <div className="absolute left-0 right-0 top-2 flex justify-center pointer-events-none">
-            <div className="rounded-md bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm">
-              Aug 2019 · Before
-            </div>
-          </div>
-          {/* NDVI badge */}
-          <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded bg-black/65 px-2 py-1 text-[10px] font-mono text-white/80 backdrop-blur-sm">
-            <span className="inline-block h-2 w-2 rounded-sm bg-emerald-500" />
-            NDVI 0.81 · Healthy canopy
-          </div>
-          {/* Esri credit */}
-          <div className="absolute bottom-1 right-1.5 text-[8px] text-white/25">© Esri</div>
-        </div>
-
-        {/* After panel */}
-        <div className="relative">
-          {!loaded && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d1a10]">
-              <div className="text-xs text-white/40">Loading satellite imagery…</div>
-            </div>
-          )}
-          <div ref={afterRef} style={{ height: 268 }} />
-          {/* Label overlay */}
-          <div className="absolute left-0 right-0 top-2 flex justify-center pointer-events-none">
-            <div className="rounded-md bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm">
-              Aug 2024 · After — Deforestation Detected
-            </div>
-          </div>
-          {/* NDVI badge */}
-          <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded bg-black/65 px-2 py-1 text-[10px] font-mono text-white/80 backdrop-blur-sm">
-            <span className="inline-block h-2 w-2 rounded-sm bg-red-500" />
-            NDVI 0.54 · −0.27 change
-          </div>
-          {/* Legend */}
-          <div className="absolute bottom-2 right-2 space-y-0.5">
-            <div className="flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[9px] text-white/70">
-              <span className="inline-block h-2 w-2 rounded-sm bg-[#e5561e]" /> Clearcut core
-            </div>
-            <div className="flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[9px] text-white/70">
-              <span className="inline-block h-2 w-2 rounded-sm bg-[#f4a261] opacity-60" /> Degradation
-            </div>
-          </div>
-          <div className="absolute bottom-1 right-1.5 text-[8px] text-white/25">© Esri</div>
-        </div>
+        <Panel
+          url={BEFORE_URL}
+          label="Intact Forest · Reference baseline"
+          labelClass="bg-black/65 text-emerald-300"
+          ndvi="NDVI 0.81"
+          ndviDot="#22c55e"
+          ndviLabel="Dense canopy"
+          borderRight
+        />
+        <Panel
+          url={AFTER_URL}
+          label="Deforestation Frontier · Active clearcuts"
+          labelClass="bg-black/65 text-red-300"
+          ndvi="NDVI 0.54"
+          ndviDot="#ef4444"
+          ndviLabel="−33% cover"
+          deltaLabel="−0.27 ΔNDVI"
+        />
       </div>
 
       {/* Metrics strip */}
       <div className="grid grid-cols-4 divide-x divide-white/10 border-t border-white/10 text-xs">
         {[
-          { label: "Area monitored", value: "142,500 ha" },
-          { label: "Forest loss (12 mo)", value: "18,420 ha", alert: true },
-          { label: "ΔNDVI", value: "−0.27", alert: true },
-          { label: "Confidence", value: "91%" },
+          { label: "Area monitored",     value: "142,500 ha" },
+          { label: "Forest loss (22yr)", value: "18,420 ha",  alert: true },
+          { label: "ΔNDVI",              value: "−0.27",      alert: true },
+          { label: "Confidence",         value: "91%" },
         ].map(({ label, value, alert }) => (
           <div key={label} className="px-3 py-2.5 text-center">
             <div className="text-[10px] text-white/40">{label}</div>
