@@ -8,6 +8,11 @@ import {
   CheckCircle2, X, Layers, BarChart3, Download, Info,
 } from "lucide-react";
 
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, Legend,
+  ResponsiveContainer, ReferenceLine, Cell,
+} from "recharts";
+
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { DrawAnalysisMap } from "@/components/draw-analysis-map";
 import { regions, ndviPreviewPngUrl, trueColorPreviewPngUrl } from "@/lib/forest-data";
@@ -763,7 +768,7 @@ function EpochCard({ title, e, layerKey, currentLayer, onSelect }: {
   );
 }
 
-// ─── NDVI histogram diff ──────────────────────────────────────────────────────
+// ─── NDVI histogram distribution ─────────────────────────────────────────────
 
 function HistogramDiff({ r }: { r: AnalysisResult }) {
   const b = r.before.stats.histogram;
@@ -771,50 +776,261 @@ function HistogramDiff({ r }: { r: AnalysisResult }) {
   const n = Math.min(b.counts.length, a.counts.length);
   const totalB = b.counts.reduce((s, x) => s + x, 0) || 1;
   const totalA = a.counts.reduce((s, x) => s + x, 0) || 1;
-  const diffs = Array.from({ length: n }, (_, i) => {
-    const center = (b.edges[i] + b.edges[i + 1]) / 2;
-    const dPct = (a.counts[i] / totalA - b.counts[i] / totalB) * 100;
-    return { center, dPct };
+
+  const data = Array.from({ length: n }, (_, i) => {
+    const center = +((b.edges[i] + b.edges[i + 1]) / 2).toFixed(3);
+    return {
+      ndvi: center.toFixed(2),
+      before: +((b.counts[i] / totalB) * 100).toFixed(2),
+      after:  +((a.counts[i] / totalA) * 100).toFixed(2),
+    };
   });
-  const maxAbs = Math.max(0.01, ...diffs.map((d) => Math.abs(d.dPct)));
+
+  const threshold = r.forestThreshold;
+
   return (
     <div className="mt-4">
-      <div className="flex h-40 items-end gap-0.5">
-        {diffs.map((d, i) => {
-          const h = (Math.abs(d.dPct) / maxAbs) * 100;
-          const isForested = d.center >= r.forestThreshold;
-          const positive = d.dPct >= 0;
-          const color = positive
-            ? (isForested ? "#2D6A4F" : "#b54a2a")
-            : (isForested ? "#b54a2a" : "#2D6A4F");
-          const isThreshold = Math.abs(d.center - r.forestThreshold) < 0.06;
-          return (
-            <div
-              key={i}
-              className={`flex flex-1 flex-col items-center justify-end ${isThreshold ? "relative" : ""}`}
-              title={`NDVI ≈ ${d.center.toFixed(2)} · Δ ${d.dPct.toFixed(2)}%`}
-            >
-              {isThreshold && (
-                <div className="absolute top-0 bottom-0 w-px bg-earth/60 pointer-events-none" />
-              )}
-              <div
-                style={{ height: `${h}%`, backgroundColor: color, opacity: 0.82 }}
-                className="w-full rounded-sm"
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={data} barCategoryGap="10%" barGap={2} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+          <XAxis
+            dataKey="ndvi"
+            tick={{ fontSize: 9, fill: "var(--muted-foreground, #888)" }}
+            interval={3}
+            tickLine={false}
+            axisLine={false}
+          />
+          <YAxis
+            tick={{ fontSize: 9, fill: "var(--muted-foreground, #888)" }}
+            tickFormatter={(v) => `${v}%`}
+            tickLine={false}
+            axisLine={false}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "var(--card, #111)",
+              border: "1px solid var(--border, #333)",
+              borderRadius: 8,
+              fontSize: 11,
+            }}
+            formatter={(val: number, name: string) => [`${val.toFixed(2)}%`, name === "before" ? "Before" : "After"]}
+            labelFormatter={(l) => `NDVI ≈ ${l}`}
+          />
+          <Legend
+            iconType="square"
+            iconSize={8}
+            wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
+            formatter={(v) => v === "before" ? "Before period" : "After period"}
+          />
+          <ReferenceLine
+            x={data.reduce((best, d, i) =>
+              Math.abs(parseFloat(d.ndvi) - threshold) < Math.abs(parseFloat(data[best].ndvi) - threshold) ? i : best
+            , 0).toString()}
+            stroke="var(--earth, #8B6914)"
+            strokeDasharray="4 3"
+            strokeWidth={1.5}
+            label={{ value: `Threshold ${threshold.toFixed(2)}`, position: "top", fontSize: 9, fill: "var(--earth, #8B6914)" }}
+          />
+          <Bar dataKey="before" radius={[2, 2, 0, 0]}>
+            {data.map((d) => (
+              <Cell
+                key={d.ndvi}
+                fill={parseFloat(d.ndvi) >= threshold ? "#2D6A4F" : "#6b8c78"}
+                fillOpacity={0.85}
               />
-              {(i % 4 === 0) && (
-                <div className="mt-1 text-[9px] text-muted-foreground">{d.center.toFixed(1)}</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-2 flex items-center gap-4 text-[11px] text-muted-foreground">
-        <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-forest-deep" /> More pixels (gain)</span>
-        <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-alert" /> Fewer pixels (loss)</span>
-        <span className="flex items-center gap-1"><span className="inline-block h-2 w-0.5 bg-earth/70" /> Forest threshold ({r.forestThreshold.toFixed(2)})</span>
-      </div>
+            ))}
+          </Bar>
+          <Bar dataKey="after" radius={[2, 2, 0, 0]}>
+            {data.map((d) => (
+              <Cell
+                key={d.ndvi}
+                fill={parseFloat(d.ndvi) >= threshold ? "#e07a5f" : "#c0392b"}
+                fillOpacity={0.85}
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      <p className="mt-1 text-[10px] text-muted-foreground">
+        Normalised pixel frequency (%) per NDVI bin. NDVI ≥ {threshold.toFixed(2)} = forest.
+        Leftward shift of the After curve indicates canopy loss.
+      </p>
     </div>
   );
+}
+
+// ─── PDF export helper ────────────────────────────────────────────────────────
+
+function exportPdf(r: AnalysisResult) {
+  const lossPct = r.areaHa > 0 ? ((r.lossHa / r.areaHa) * 100).toFixed(2) : "0.00";
+  const date = new Date(r.computedAt).toLocaleString("en-US", {
+    year: "numeric", month: "long", day: "numeric",
+    hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+  });
+  const beforeDate = new Date(r.before.datetime).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const afterDate  = new Date(r.after.datetime).toLocaleDateString("en-US",  { year: "numeric", month: "long", day: "numeric" });
+  const confidence = (r.confidence * 100).toFixed(0);
+  const deltaNdvi  = r.deltaNdvi >= 0 ? `+${r.deltaNdvi.toFixed(3)}` : r.deltaNdvi.toFixed(3);
+
+  // Build NDVI histogram rows for the table
+  const hb = r.before.stats.histogram;
+  const ha = r.after.stats.histogram;
+  const totalB = hb.counts.reduce((s, x) => s + x, 0) || 1;
+  const totalA = ha.counts.reduce((s, x) => s + x, 0) || 1;
+  const histRows = hb.counts.map((bc, i) => {
+    const ac = ha.counts[i] ?? 0;
+    const lo = hb.edges[i]?.toFixed(2) ?? "";
+    const hi = hb.edges[i + 1]?.toFixed(2) ?? "";
+    const bPct = ((bc / totalB) * 100).toFixed(1);
+    const aPct = ((ac / totalA) * 100).toFixed(1);
+    const diff  = (ac / totalA - bc / totalB) * 100;
+    const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+    return `<tr>
+      <td>${lo} – ${hi}</td>
+      <td>${bc.toLocaleString()} (${bPct}%)</td>
+      <td>${ac.toLocaleString()} (${aPct}%)</td>
+      <td style="color:${diff < 0 ? "#c0392b" : "#2D6A4F"};font-weight:600">${diffStr}%</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ForestWatch AI — Analysis Report</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #1a1a1a; background: #fff; padding: 32px 40px; }
+  @media print {
+    body { padding: 0; }
+    .no-print { display: none !important; }
+    @page { margin: 18mm 14mm; size: A4 portrait; }
+  }
+  .header { display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 3px solid #2D6A4F; padding-bottom: 14px; margin-bottom: 20px; }
+  .logo { font-size: 20px; font-weight: 700; color: #2D6A4F; letter-spacing: -0.5px; }
+  .logo span { color: #1a1a1a; font-weight: 400; }
+  .meta { font-size: 11px; color: #555; text-align: right; line-height: 1.6; }
+  h2 { font-size: 14px; font-weight: 700; color: #2D6A4F; margin: 22px 0 10px; border-left: 3px solid #2D6A4F; padding-left: 8px; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+  .kpi { border: 1px solid #ddd; border-radius: 8px; padding: 12px 14px; background: #fafafa; }
+  .kpi-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: #777; margin-bottom: 4px; }
+  .kpi-value { font-size: 22px; font-weight: 700; line-height: 1; }
+  .kpi-sub { font-size: 10px; color: #666; margin-top: 3px; }
+  .kpi.alert .kpi-value { color: #c0392b; }
+  .kpi.ok .kpi-value    { color: #2D6A4F; }
+  .scene-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .scene { border: 1px solid #ddd; border-radius: 8px; padding: 13px 15px; background: #fafafa; }
+  .scene h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #555; margin-bottom: 8px; }
+  .scene dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 16px; font-size: 11px; }
+  .scene dt { color: #777; }
+  .scene dd { font-family: "Courier New", monospace; text-align: right; color: #1a1a1a; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+  thead { background: #2D6A4F; color: #fff; }
+  th { padding: 7px 10px; text-align: left; font-weight: 600; font-size: 10px; }
+  td { padding: 5px 10px; border-bottom: 1px solid #eee; }
+  tr:nth-child(even) td { background: #f8f8f8; }
+  .footer { margin-top: 28px; border-top: 1px solid #ddd; padding-top: 10px; font-size: 10px; color: #888; display: flex; justify-content: space-between; }
+  .print-btn { position: fixed; bottom: 24px; right: 24px; background: #2D6A4F; color: #fff; border: none; border-radius: 8px; padding: 10px 22px; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.18); }
+  .print-btn:hover { background: #1b4332; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+  .badge.loss { background: #fdecea; color: #c0392b; }
+  .badge.ok   { background: #e8f5e9; color: #2D6A4F; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <div class="logo">ForestWatch <span>AI</span></div>
+    <div style="font-size:11px;color:#666;margin-top:3px">Sentinel-2 L2A · NDVI Deforestation Analysis Report</div>
+  </div>
+  <div class="meta">
+    Generated: ${date}<br/>
+    Forest threshold: NDVI ≥ ${r.forestThreshold.toFixed(2)}<br/>
+    Platform: ${r.before.platform ?? "Sentinel-2"}<br/>
+    <span class="badge ${r.lossHa > 0 ? "loss" : "ok"}">${r.lossHa > 0 ? "⚠ Deforestation detected" : "✓ No significant loss"}</span>
+  </div>
+</div>
+
+<h2>Key Findings</h2>
+<div class="kpi-grid">
+  <div class="kpi ${r.lossHa > 0 ? "alert" : "ok"}">
+    <div class="kpi-label">Detected Forest Loss</div>
+    <div class="kpi-value">${r.lossHa.toLocaleString()} ha</div>
+    <div class="kpi-sub">${lossPct}% of AOI</div>
+  </div>
+  <div class="kpi ${r.deltaNdvi < 0 ? "alert" : "ok"}">
+    <div class="kpi-label">ΔNDVI (mean shift)</div>
+    <div class="kpi-value">${deltaNdvi}</div>
+    <div class="kpi-sub">${r.before.stats.mean.toFixed(3)} → ${r.after.stats.mean.toFixed(3)}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">AOI Area</div>
+    <div class="kpi-value">${r.areaHa.toLocaleString()} ha</div>
+    <div class="kpi-sub">Area of interest</div>
+  </div>
+  <div class="kpi ${r.confidence > 0.7 ? "ok" : "alert"}">
+    <div class="kpi-label">Confidence Score</div>
+    <div class="kpi-value">${confidence}%</div>
+    <div class="kpi-sub">Valid-pixel weighted</div>
+  </div>
+</div>
+
+<h2>Scene Metadata</h2>
+<div class="scene-grid">
+  <div class="scene">
+    <h3>Before Scene</h3>
+    <dl>
+      <dt>Date</dt><dd>${beforeDate}</dd>
+      <dt>Scene ID</dt><dd style="font-size:9px;word-break:break-all">${r.before.itemId}</dd>
+      <dt>Cloud cover</dt><dd>${r.before.cloudCover != null ? r.before.cloudCover + "%" : "N/A"}</dd>
+      <dt>Mean NDVI</dt><dd>${r.before.stats.mean.toFixed(4)}</dd>
+      <dt>NDVI std dev</dt><dd>${r.before.stats.std.toFixed(4)}</dd>
+      <dt>Forest fraction</dt><dd>${(r.before.forestFraction * 100).toFixed(1)}%</dd>
+      <dt>Valid pixels</dt><dd>${r.before.stats.validPixels.toLocaleString()}</dd>
+    </dl>
+  </div>
+  <div class="scene">
+    <h3>After Scene</h3>
+    <dl>
+      <dt>Date</dt><dd>${afterDate}</dd>
+      <dt>Scene ID</dt><dd style="font-size:9px;word-break:break-all">${r.after.itemId}</dd>
+      <dt>Cloud cover</dt><dd>${r.after.cloudCover != null ? r.after.cloudCover + "%" : "N/A"}</dd>
+      <dt>Mean NDVI</dt><dd>${r.after.stats.mean.toFixed(4)}</dd>
+      <dt>NDVI std dev</dt><dd>${r.after.stats.std.toFixed(4)}</dd>
+      <dt>Forest fraction</dt><dd>${(r.after.forestFraction * 100).toFixed(1)}%</dd>
+      <dt>Valid pixels</dt><dd>${r.after.stats.validPixels.toLocaleString()}</dd>
+    </dl>
+  </div>
+</div>
+
+<h2>NDVI Distribution — Before vs After</h2>
+<table>
+  <thead>
+    <tr>
+      <th>NDVI Bin</th>
+      <th>Before (count / %)</th>
+      <th>After (count / %)</th>
+      <th>Shift (Δ%)</th>
+    </tr>
+  </thead>
+  <tbody>${histRows}</tbody>
+</table>
+
+<div class="footer">
+  <span>ForestWatch AI · Sentinel-2 L2A via Element84 Earth Search · Statistics via Titiler.xyz</span>
+  <span>NDVI = (B8 − B4) / (B8 + B4) · Forest threshold NDVI ≥ ${r.forestThreshold.toFixed(2)}</span>
+</div>
+
+<button class="print-btn no-print" onclick="window.print()">Save as PDF ↓</button>
+</body>
+</html>`;
+
+  const w = window.open("", "_blank", "width=900,height=700");
+  if (!w) return;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  // Auto-trigger print after layout settles
+  w.addEventListener("load", () => setTimeout(() => w.print(), 400));
 }
 
 // ─── Download strip ───────────────────────────────────────────────────────────
@@ -822,34 +1038,34 @@ function HistogramDiff({ r }: { r: AnalysisResult }) {
 function DownloadStrip({ r }: { r: AnalysisResult }) {
   function exportCsv() {
     const meta = [
-      { metric: "before_item",           value: r.before.itemId },
-      { metric: "before_datetime",       value: r.before.datetime },
-      { metric: "before_cloud_cover",    value: r.before.cloudCover ?? "" },
-      { metric: "before_mean_ndvi",      value: r.before.stats.mean },
-      { metric: "before_forest_fraction",value: r.before.forestFraction },
-      { metric: "after_item",            value: r.after.itemId },
-      { metric: "after_datetime",        value: r.after.datetime },
-      { metric: "after_cloud_cover",     value: r.after.cloudCover ?? "" },
-      { metric: "after_mean_ndvi",       value: r.after.stats.mean },
-      { metric: "after_forest_fraction", value: r.after.forestFraction },
-      { metric: "delta_ndvi",            value: r.deltaNdvi },
-      { metric: "aoi_area_ha",           value: r.areaHa },
-      { metric: "loss_ha",               value: r.lossHa },
-      { metric: "loss_fraction",         value: r.lossFraction },
-      { metric: "confidence",            value: r.confidence },
-      { metric: "forest_threshold",      value: r.forestThreshold },
-      { metric: "computed_at",           value: r.computedAt },
+      { metric: "before_item",            value: r.before.itemId },
+      { metric: "before_datetime",        value: r.before.datetime },
+      { metric: "before_cloud_cover",     value: r.before.cloudCover ?? "" },
+      { metric: "before_mean_ndvi",       value: r.before.stats.mean },
+      { metric: "before_forest_fraction", value: r.before.forestFraction },
+      { metric: "after_item",             value: r.after.itemId },
+      { metric: "after_datetime",         value: r.after.datetime },
+      { metric: "after_cloud_cover",      value: r.after.cloudCover ?? "" },
+      { metric: "after_mean_ndvi",        value: r.after.stats.mean },
+      { metric: "after_forest_fraction",  value: r.after.forestFraction },
+      { metric: "delta_ndvi",             value: r.deltaNdvi },
+      { metric: "aoi_area_ha",            value: r.areaHa },
+      { metric: "loss_ha",                value: r.lossHa },
+      { metric: "loss_fraction",          value: r.lossFraction },
+      { metric: "confidence",             value: r.confidence },
+      { metric: "forest_threshold",       value: r.forestThreshold },
+      { metric: "computed_at",            value: r.computedAt },
     ];
     const histRows = r.before.stats.histogram.counts.map((c, i) => ({
-      bin_low:    r.before.stats.histogram.edges[i],
-      bin_high:   r.before.stats.histogram.edges[i + 1],
+      bin_low:      r.before.stats.histogram.edges[i],
+      bin_high:     r.before.stats.histogram.edges[i + 1],
       count_before: c,
       count_after:  r.after.stats.histogram.counts[i] ?? 0,
     }));
     const csv =
-      "# ForestWatch AI — Sentinel-2 L2A analysis via MS Planetary Computer\n" +
+      "# ForestWatch AI — Sentinel-2 L2A NDVI Analysis\n" +
       toCsv(meta) + "\n\n" + toCsv(histRows);
-    downloadText(`forestwatch-analysis-${r.computedAt.slice(0, 10)}.csv`, csv, "text/csv");
+    downloadText(`forestwatch-${r.computedAt.slice(0, 10)}.csv`, csv, "text/csv");
   }
 
   return (
@@ -859,10 +1075,17 @@ function DownloadStrip({ r }: { r: AnalysisResult }) {
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <button
+          onClick={() => exportPdf(r)}
+          className="ring-soft flex items-center justify-between rounded-xl border border-border bg-card px-4 py-4 text-sm transition hover:border-moss"
+        >
+          <span className="flex items-center gap-3"><FileText className="h-4 w-4 text-moss" /> Analysis Report PDF</span>
+          <span className="text-xs text-muted-foreground">↓</span>
+        </button>
+        <button
           onClick={exportCsv}
           className="ring-soft flex items-center justify-between rounded-xl border border-border bg-card px-4 py-4 text-sm transition hover:border-moss"
         >
-          <span className="flex items-center gap-3"><Table className="h-4 w-4 text-moss" /> Analysis CSV</span>
+          <span className="flex items-center gap-3"><Table className="h-4 w-4 text-moss" /> Raw Data CSV</span>
           <span className="text-xs text-muted-foreground">↓</span>
         </button>
         <a
@@ -877,13 +1100,6 @@ function DownloadStrip({ r }: { r: AnalysisResult }) {
           className="ring-soft flex items-center justify-between rounded-xl border border-border bg-card px-4 py-4 text-sm transition hover:border-moss"
         >
           <span className="flex items-center gap-3"><ImageIcon className="h-4 w-4 text-moss" /> NDVI · After</span>
-          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-        </a>
-        <a
-          href={trueColorPreviewPngUrl(r.after.itemId)} target="_blank" rel="noreferrer"
-          className="ring-soft flex items-center justify-between rounded-xl border border-border bg-card px-4 py-4 text-sm transition hover:border-moss"
-        >
-          <span className="flex items-center gap-3"><FileText className="h-4 w-4 text-moss" /> True Color PNG</span>
           <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
         </a>
       </div>
