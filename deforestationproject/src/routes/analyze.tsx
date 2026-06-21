@@ -66,11 +66,11 @@ function Analyze() {
   // Date state
   const [beforeStart, setBeforeStart] = useState("2019-08-01");
   const [beforeEnd, setBeforeEnd] = useState("2019-09-30");
-  const [afterStart, setAfterStart] = useState(daysAgo(60));
-  const [afterEnd, setAfterEnd] = useState(today);
+  const [afterStart, setAfterStart] = useState(daysAgo(365));
+  const [afterEnd, setAfterEnd] = useState(daysAgo(30));
 
   // Settings
-  const [maxCloud, setMaxCloud] = useState(20);
+  const [maxCloud, setMaxCloud] = useState(40);
   const [forestThreshold, setForestThreshold] = useState(0.5);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -168,8 +168,8 @@ function Analyze() {
     const refYear = new Date().getFullYear() - yearsAgo;
     setBeforeStart(`${refYear}-07-01`);
     setBeforeEnd(`${refYear}-09-30`);
-    setAfterStart(daysAgo(60));
-    setAfterEnd(today);
+    setAfterStart(daysAgo(365));
+    setAfterEnd(daysAgo(30));
   }
 
   // ── Derived overlay params ──────────────────────────────────────────────────
