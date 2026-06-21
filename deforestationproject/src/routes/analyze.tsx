@@ -638,6 +638,17 @@ function ResultSection({ r, onLayerChange, currentLayer }: {
         <div className="h-px flex-1 bg-border" />
       </div>
 
+      {/* Estimated-data warning */}
+      {r.estimated && (
+        <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+          <span>
+            <strong className="text-amber-100">Satellite data unavailable for this area/period.</strong>
+            {" "}No cloud-free Sentinel-2 scenes were found. Results below are placeholder estimates only — try widening the date range or increasing the max cloud cover.
+          </span>
+        </div>
+      )}
+
       {/* KPI cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
@@ -939,7 +950,7 @@ function exportPdf(r: AnalysisResult) {
 <body>
 <div class="header">
   <div>
-    <div class="logo">Retreeval <span>AI</span></div>
+    <div class="logo">Retreeval</div>
     <div style="font-size:11px;color:#666;margin-top:3px">Sentinel-2 L2A · NDVI Deforestation Analysis Report</div>
   </div>
   <div class="meta">
