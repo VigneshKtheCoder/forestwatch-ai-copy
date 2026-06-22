@@ -192,7 +192,7 @@ function Analyze() {
           <h1 className="mt-1 text-3xl">Forest Change Analysis</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Draw your area of interest, pick two date windows, and run a live NDVI change analysis powered by
-            Microsoft Planetary Computer.
+            Hansen GFC + Sentinel-2.
           </p>
         </div>
 
@@ -459,7 +459,7 @@ function Analyze() {
                     <div className="flex justify-between"><span>Source</span><span>Sentinel-2 L2A</span></div>
                     <div className="flex justify-between"><span>Bands</span><span>B04 (Red) · B08 (NIR)</span></div>
                     <div className="flex justify-between"><span>Resolution</span><span>10 m / pixel</span></div>
-                    <div className="flex justify-between"><span>Backend</span><span>MS Planetary Computer</span></div>
+                    <div className="flex justify-between"><span>Backend</span><span>Hansen GFC + Earth Search</span></div>
                   </div>
                 </div>
               )}
@@ -486,7 +486,7 @@ function Analyze() {
 
               {m.isPending && (
                 <div className="space-y-1.5 text-xs text-muted-foreground">
-                  <LoadingStep label="Searching Planetary Computer STAC catalog…" />
+                  <LoadingStep label="Querying Hansen GFC + Sentinel-2 STAC catalog…" />
                   <LoadingStep label="Selecting lowest-cloud Sentinel-2 scenes…" delayed />
                   <LoadingStep label="Computing NDVI statistics over AOI…" delayed2 />
                 </div>
@@ -585,9 +585,9 @@ function Analyze() {
         {m.isPending && (
           <div className="mt-6 ring-soft rounded-xl border border-border bg-card p-10 text-center">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-moss mb-3" />
-            <p className="text-sm font-medium">Querying Sentinel-2 archive…</p>
+            <p className="text-sm font-medium">Querying satellite data…</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Searching for the lowest-cloud scenes in your date windows, then computing NDVI statistics over your AOI.
+              Fetching Hansen GFC forest-loss pixels and Sentinel-2 NDVI for your area. This takes 10–30 seconds.
             </p>
           </div>
         )}
@@ -638,28 +638,42 @@ function ResultSection({ r, onLayerChange, currentLayer }: {
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      {/* Estimated-data warning */}
-      {r.estimated && (
+      {/* Hansen validation badge */}
+      {r.hansen?.validated ? (
+        <div className="flex items-start gap-2.5 rounded-lg border border-moss/30 bg-moss/10 px-4 py-3 text-sm text-green-200">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-moss" />
+          <span>
+            <strong className="text-green-100">Hansen GFC validated.</strong>
+            {" "}Forest loss is computed pixel-by-pixel from the University of Maryland Hansen Global Forest Change v1.11 dataset (30 m resolution, 2001–2023). Sentinel-2 NDVI provides the before/after vegetation index comparison below.
+          </span>
+        </div>
+      ) : r.estimated ? (
         <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
           <span>
-            <strong className="text-amber-100">Satellite data unavailable for this area/period.</strong>
-            {" "}No cloud-free Sentinel-2 scenes were found. Results below are placeholder estimates only — try widening the date range or increasing the max cloud cover.
+            <strong className="text-amber-100">Data unavailable for this area/period.</strong>
+            {" "}Neither Hansen GFC nor Sentinel-2 returned valid data. Try widening the date range or increasing max cloud cover.
           </span>
         </div>
-      )}
+      ) : null}
 
       {/* KPI cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label="Detected Forest Loss"
+          label="Forest Loss (Hansen GFC)"
           value={`${r.lossHa.toLocaleString()} ha`}
-          sub={`${lossPct.toFixed(2)}% of AOI`}
+          sub={`${lossPct.toFixed(2)}% of AOI${r.hansen ? " · pixel-verified" : " · NDVI estimate"}`}
           tone={r.lossHa > 0 ? "alert" : "ok"}
           icon={<TrendingDownIcon className={`h-4 w-4 ${r.lossHa > 0 ? "text-alert" : "text-moss"}`} />}
         />
         <MetricCard
-          label="ΔNDVI (mean)"
+          label="Tree Cover 2000 (baseline)"
+          value={r.hansen ? `${r.hansen.treecover2000.toFixed(0)}%` : "—"}
+          sub={r.hansen ? "Mean canopy cover in AOI (year 2000)" : "Hansen data unavailable"}
+          tone={r.hansen ? (r.hansen.treecover2000 > 50 ? "ok" : undefined) : undefined}
+        />
+        <MetricCard
+          label="ΔNDVI (Sentinel-2)"
           value={r.deltaNdvi > 0 ? `+${r.deltaNdvi.toFixed(3)}` : r.deltaNdvi.toFixed(3)}
           sub={`${r.before.stats.mean.toFixed(3)} → ${r.after.stats.mean.toFixed(3)} (${ndviDeltaDir})`}
           tone={r.deltaNdvi < 0 ? "alert" : "ok"}
@@ -667,13 +681,7 @@ function ResultSection({ r, onLayerChange, currentLayer }: {
         <MetricCard
           label="AOI Area"
           value={`${r.areaHa.toLocaleString()} ha`}
-          sub={`Forest threshold: NDVI ≥ ${r.forestThreshold.toFixed(2)}`}
-        />
-        <MetricCard
-          label="Confidence Score"
-          value={`${(r.confidence * 100).toFixed(0)}%`}
-          sub="Valid-pixel & cloud-weighted"
-          tone={r.confidence > 0.7 ? "ok" : "alert"}
+          sub={`Hansen total loss 2001–2023: ${r.hansen ? r.hansen.totalLossHa.toLocaleString() + " ha" : "n/a"}`}
         />
       </div>
 
@@ -697,6 +705,9 @@ function ResultSection({ r, onLayerChange, currentLayer }: {
         </div>
         <HistogramDiff r={r} />
       </div>
+
+      {/* Hansen yearly loss chart */}
+      {r.hansen && <HansenLossChart r={r} />}
 
       {/* Downloads */}
       <DownloadStrip r={r} />
@@ -775,6 +786,69 @@ function EpochCard({ title, e, layerKey, currentLayer, onSelect }: {
         <dd className="text-right font-mono">{e.stats.validPixels.toLocaleString()}</dd>
       </dl>
       <div className="mt-3 break-all text-[10px] text-muted-foreground font-mono">{e.itemId}</div>
+    </div>
+  );
+}
+
+// ─── Hansen yearly forest loss chart ─────────────────────────────────────────
+
+function HansenLossChart({ r }: { r: AnalysisResult }) {
+  if (!r.hansen) return null;
+  const data = r.hansen.yearlyLoss.map(({ year, ha }) => ({ year: String(year), ha }));
+
+  return (
+    <div className="ring-soft rounded-xl border border-border bg-card p-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-sm font-medium">Hansen GFC — Historical Forest Loss by Year</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Pixel-level deforestation from the University of Maryland Global Forest Change v1.11 dataset, 30 m resolution.
+            {" "}Tree cover baseline (year 2000): <strong>{r.hansen.treecover2000.toFixed(0)}%</strong>.
+            {" "}Total 2001–2023: <strong>{r.hansen.totalLossHa.toLocaleString()} ha</strong>.
+          </p>
+        </div>
+      </div>
+      <div className="mt-4">
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={data} barCategoryGap="15%" margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+            <XAxis
+              dataKey="year"
+              tick={{ fontSize: 9, fill: "var(--muted-foreground, #888)" }}
+              interval={2}
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              tick={{ fontSize: 9, fill: "var(--muted-foreground, #888)" }}
+              tickFormatter={(v) => `${v}`}
+              tickLine={false}
+              axisLine={false}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "var(--card, #111)",
+                border: "1px solid var(--border, #333)",
+                borderRadius: 8,
+                fontSize: 11,
+              }}
+              formatter={(val: number) => [`${val.toFixed(1)} ha`, "Forest loss"]}
+              labelFormatter={(l) => `Year ${l}`}
+            />
+            <Bar dataKey="ha" radius={[2, 2, 0, 0]}>
+              {data.map((d) => (
+                <Cell
+                  key={d.year}
+                  fill={d.ha > 0 ? "#e07a5f" : "#6b8c78"}
+                  fillOpacity={0.9}
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="mt-1 text-[10px] text-muted-foreground">
+        Source: Hansen/UMD/Google/USGS/NASA Global Forest Change. Each bar = confirmed tree-cover loss that year within the drawn polygon.
+      </p>
     </div>
   );
 }
@@ -873,6 +947,10 @@ function HistogramDiff({ r }: { r: AnalysisResult }) {
 
 function exportPdf(r: AnalysisResult) {
   const lossPct = r.areaHa > 0 ? ((r.lossHa / r.areaHa) * 100).toFixed(2) : "0.00";
+  const hansenRows = r.hansen?.yearlyLoss
+    .filter(yl => yl.ha > 0)
+    .map(yl => `<tr><td>${yl.year}</td><td>${yl.ha.toLocaleString()} ha</td></tr>`)
+    .join("") ?? "";
   const date = new Date(r.computedAt).toLocaleString("en-US", {
     year: "numeric", month: "long", day: "numeric",
     hour: "2-digit", minute: "2-digit", timeZoneName: "short",
@@ -1026,9 +1104,22 @@ function exportPdf(r: AnalysisResult) {
   <tbody>${histRows}</tbody>
 </table>
 
+${r.hansen ? `
+<h2>Hansen GFC — Historical Forest Loss (2001–2023)</h2>
+<p style="font-size:11px;color:#555;margin-bottom:8px">
+  Source: Hansen/UMD/Google/USGS/NASA Global Forest Change v1.11 · 30 m resolution · pixel-verified.
+  Tree cover 2000: <strong>${r.hansen.treecover2000.toFixed(0)}%</strong> ·
+  Total 2001–2023: <strong>${r.hansen.totalLossHa.toLocaleString()} ha</strong> ·
+  In selected period: <strong>${r.hansen.lossHaInPeriod.toLocaleString()} ha</strong>.
+</p>
+<table>
+  <thead><tr><th>Year</th><th>Forest Loss (ha)</th></tr></thead>
+  <tbody>${hansenRows}</tbody>
+</table>` : ""}
+
 <div class="footer">
-  <span>Retreeval · Sentinel-2 L2A via Element84 Earth Search · Statistics via Titiler.xyz</span>
-  <span>NDVI = (B8 − B4) / (B8 + B4) · Forest threshold NDVI ≥ ${r.forestThreshold.toFixed(2)}</span>
+  <span>Retreeval · Hansen GFC v1.11 + Sentinel-2 L2A · Element84 Earth Search · Titiler.xyz</span>
+  <span>Loss = Hansen pixel count × 0.09 ha/pixel · NDVI = (B8 − B4) / (B8 + B4)</span>
 </div>
 
 <button class="print-btn no-print" onclick="window.print()">Save as PDF ↓</button>

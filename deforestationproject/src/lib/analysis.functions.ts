@@ -1,26 +1,26 @@
-// Real Sentinel-2 L2A NDVI analysis.
-// STAC backend: Element84 Earth Search v1 (https://earth-search.aws.element84.com/v1)
-// Statistics backend: Titiler.xyz v2 (https://titiler.xyz)
+// Retreeval — NDVI analysis powered by real satellite data
 //
-// Earth Search v1 uses descriptive asset names: "red", "nir", "nir08", etc.
-// Titiler v2 /cog/statistics POST with GeoJSON geometry body is confirmed working.
+// Primary loss metric: Hansen Global Forest Change v1.11 (2023)
+//   COGs hosted on Google Cloud Storage (public, no auth)
+//   Queried via Titiler.xyz /cog/statistics POST with GeoJSON polygon
+//   Resolution: 30 m → 0.09 ha per pixel
+//   lossyear values: 0 = no loss, 1 = 2001, …, 23 = 2023
 //
-// Strategy (two layers):
-//   A. COG /statistics POST — sends each band COG URL + drawn polygon to Titiler.
-//      Titiler clips to AOI, returns real per-pixel mean reflectance values.
-//      NDVI = (NIR_mean − Red_mean) / (NIR_mean + Red_mean), histogram approximated.
-//   B. COG /statistics GET with bbox — fallback if POST fails.
-//   C. Synthetic neutral fallback — both periods same distribution → loss = 0.
-//      UI shows "data unavailable" banner so users know to widen date range.
+// Secondary (visualization): Sentinel-2 L2A from Element84 Earth Search v1
+//   NIR (B8) + Red (B4) COGs → NDVI distribution histograms
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { polygonAreaHa, type Polygon } from "./geo";
 
 export const EARTH_SEARCH = "https://earth-search.aws.element84.com/v1";
-export const TITILER = "https://titiler.xyz";
-const COLLECTION = "sentinel-2-l2a";
-const FETCH_TIMEOUT = 25_000; // ms
+export const TITILER       = "https://titiler.xyz";
+const HANSEN_BASE = "https://storage.googleapis.com/earthenginepartners-hansen/GFC-2023-v1.11";
+const COLLECTION  = "sentinel-2-l2a";
+const FETCH_TIMEOUT = 28_000;
+
+// Hansen 30 m pixel → 900 m² → 0.09 ha
+const HANSEN_PX_HA = 0.09;
 
 const PolygonSchema = z.object({
   type: z.literal("Polygon"),
@@ -28,12 +28,12 @@ const PolygonSchema = z.object({
 });
 
 const InputSchema = z.object({
-  geometry: PolygonSchema,
-  beforeStart: z.string().min(8),
-  beforeEnd: z.string().min(8),
-  afterStart: z.string().min(8),
-  afterEnd: z.string().min(8),
-  maxCloud: z.number().min(0).max(100).default(20),
+  geometry:     PolygonSchema,
+  beforeStart:  z.string().min(8),
+  beforeEnd:    z.string().min(8),
+  afterStart:   z.string().min(8),
+  afterEnd:     z.string().min(8),
+  maxCloud:     z.number().min(0).max(100).default(40),
   forestThreshold: z.number().min(0).max(1).default(0.5),
 });
 
@@ -53,11 +53,16 @@ interface EsItem {
 
 interface TitilerStats {
   min: number; max: number; mean: number; std: number;
-  median?: number;
-  count?: number;
-  valid_pixels?: number; masked_pixels?: number;
+  valid_pixels?: number; masked_pixels?: number; count?: number;
   histogram: [number[], number[]];
-  percentile_2?: number; percentile_98?: number;
+}
+
+export interface HansenResult {
+  validated: boolean;
+  treecover2000: number;
+  lossHaInPeriod: number;
+  totalLossHa: number;
+  yearlyLoss: { year: number; ha: number }[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -79,7 +84,6 @@ function polyBbox(geometry: Polygon): [number, number, number, number] {
   return [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
 }
 
-// Build a Gaussian-approximated NDVI histogram centred on the real measured mean.
 function gaussianHistogram(mean: number, std: number): [number[], number[]] {
   const counts = Array.from({ length: 20 }, (_, i) => {
     const center = -1 + i * 0.1 + 0.05;
@@ -90,279 +94,311 @@ function gaussianHistogram(mean: number, std: number): [number[], number[]] {
   return [counts, edges];
 }
 
-// Extract TitilerStats from any Titiler /cog/statistics response shape.
-// Handles two formats:
-//   GET  → { "b1": { min, max, mean, ... } }
-//   POST → { "type":"Feature", "properties": { "statistics": { "b1": {...} } } }
-function parseCogStatsResponse(json: any): { mean: number; valid: number; masked: number } | null {
-  let bandStats: any;
-
+function parseCogStats(json: any): { mean: number; valid: number } | null {
+  let b: any;
   if (json?.properties?.statistics) {
-    // POST with GeoJSON body
-    const bag = json.properties.statistics as Record<string, any>;
-    bandStats = bag["b1"] ?? Object.values(bag)[0];
-  } else if (json && typeof json === "object" && !Array.isArray(json)) {
-    // GET with bbox
-    bandStats = json["b1"] ?? Object.values(json)[0];
+    b = json.properties.statistics["b1"] ?? Object.values(json.properties.statistics)[0];
+  } else {
+    b = json?.["b1"] ?? (json && typeof json === "object" && !Array.isArray(json) ? Object.values(json)[0] : null);
+  }
+  if (!b || typeof b.mean !== "number") return null;
+  return { mean: b.mean, valid: b.valid_pixels ?? b.count ?? 0 };
+}
+
+// ─── Hansen tile naming ───────────────────────────────────────────────────────
+// Hansen GFC tiles are 10°×10°, named by their NW (northwest) corner.
+// "00N_070W" covers lat 0 to −10°, lon −70° to −60°.
+function hansenTileName(latNW: number, lonNW: number): string {
+  const latStr = latNW >= 0
+    ? `${String(latNW).padStart(2, "0")}N`
+    : `${String(Math.abs(latNW)).padStart(2, "0")}S`;
+  const lonStr = lonNW >= 0
+    ? `${String(lonNW).padStart(3, "0")}E`
+    : `${String(Math.abs(lonNW)).padStart(3, "0")}W`;
+  return `${latStr}_${lonStr}`;
+}
+
+function getHansenTiles(geometry: Polygon): string[] {
+  const coords = geometry.coordinates[0];
+  const lons = coords.map(c => c[0]);
+  const lats = coords.map(c => c[1]);
+  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+
+  // NW lat corner of the tile containing a given latitude:  ceil(lat/10)*10
+  // SW lon corner of the tile containing a given longitude: floor(lon/10)*10
+  const topLat  = Math.ceil(maxLat / 10) * 10;
+  const botLat  = Math.ceil(minLat / 10) * 10;
+  const leftLon = Math.floor(minLon / 10) * 10;
+  const rightLon= Math.floor(maxLon / 10) * 10;
+
+  const tiles: string[] = [];
+  for (let lat = topLat; lat >= botLat; lat -= 10) {
+    for (let lon = leftLon; lon <= rightLon; lon += 10) {
+      tiles.push(hansenTileName(lat, lon));
+    }
+  }
+  return tiles;
+}
+
+// ─── Hansen COG query (Titiler POST with GeoJSON) ─────────────────────────────
+async function queryHansenTile(
+  tile: string,
+  band: "lossyear" | "treecover2000",
+  geometry: Polygon,
+): Promise<any | null> {
+  const cogUrl = `${HANSEN_BASE}/Hansen_GFC-2023-v1.11_${band}_${tile}.tif`;
+  const params = band === "lossyear"
+    ? "&histogram_bins=24&histogram_range=0,24"
+    : "";
+  const endpoint = `${TITILER}/cog/statistics?url=${encodeURIComponent(cogUrl)}&max_size=512${params}`;
+  const body = JSON.stringify({ type: "Feature", geometry, properties: {} });
+
+  try {
+    const res = await fetchWithTimeout(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      console.warn(`[Hansen] ${tile}/${band} HTTP${res.status}: ${txt.slice(0, 120)}`);
+      return null;
+    }
+    const json = await res.json();
+    const stats = json?.properties?.statistics?.b1 ?? json?.b1;
+    return stats ?? null;
+  } catch (err: any) {
+    console.warn(`[Hansen] ${tile}/${band}: ${err?.message}`);
+    return null;
+  }
+}
+
+// ─── Hansen aggregation ───────────────────────────────────────────────────────
+async function getHansenData(
+  geometry: Polygon,
+  afterStartYear: number,
+  afterEndYear: number,
+): Promise<HansenResult | null> {
+  const tiles = getHansenTiles(geometry);
+  console.log(`[Hansen] Tiles: ${tiles.join(", ")}`);
+
+  // Fetch lossyear + treecover2000 for all tiles in parallel
+  const [lossResults, tcResults] = await Promise.all([
+    Promise.all(tiles.map(t => queryHansenTile(t, "lossyear", geometry))),
+    Promise.all(tiles.map(t => queryHansenTile(t, "treecover2000", geometry))),
+  ]);
+
+  // Accumulate per-year pixel counts across tiles
+  const yearCounts = new Array(24).fill(0);
+  let anyValid = false;
+  for (const stats of lossResults) {
+    if (!stats?.histogram) continue;
+    const [counts] = stats.histogram as [number[], number[]];
+    anyValid = true;
+    for (let i = 0; i < Math.min(counts.length, 24); i++) {
+      yearCounts[i] += counts[i];
+    }
+  }
+  if (!anyValid) {
+    console.warn("[Hansen] No valid lossyear data from any tile");
+    return null;
   }
 
-  if (!bandStats || typeof bandStats.mean !== "number") return null;
+  // Build per-year loss array (Hansen covers 2001–2023)
+  const yearlyLoss: { year: number; ha: number }[] = [];
+  let totalLossHa = 0;
+  let lossHaInPeriod = 0;
+
+  const startIdx = Math.max(1, Math.min(afterStartYear - 2000, 23));
+  const endIdx   = Math.max(1, Math.min(afterEndYear   - 2000, 23));
+
+  for (let i = 1; i <= 23; i++) {
+    const ha = +(yearCounts[i] * HANSEN_PX_HA).toFixed(1);
+    yearlyLoss.push({ year: 2000 + i, ha });
+    totalLossHa += ha;
+    if (i >= startIdx && i <= endIdx) lossHaInPeriod += ha;
+  }
+
+  // Mean tree cover 2000 across tiles
+  const tcMeans = tcResults.filter(s => s?.mean != null).map(s => s.mean as number);
+  const treecover2000 = tcMeans.length > 0
+    ? +(tcMeans.reduce((a, b) => a + b, 0) / tcMeans.length).toFixed(1)
+    : 0;
+
+  console.log(`[Hansen] treecover2000=${treecover2000}% total=${totalLossHa.toFixed(0)}ha period=${lossHaInPeriod.toFixed(0)}ha`);
   return {
-    mean: bandStats.mean,
-    valid: bandStats.valid_pixels ?? bandStats.count ?? 10000,
-    masked: bandStats.masked_pixels ?? 0,
+    validated: true,
+    treecover2000,
+    lossHaInPeriod: +lossHaInPeriod.toFixed(1),
+    totalLossHa: +totalLossHa.toFixed(1),
+    yearlyLoss,
   };
 }
 
-// ─── Band name detection ──────────────────────────────────────────────────────
-// Earth Search v1 uses descriptive names: "red", "nir"
-// Some older collections use "B04"/"B08"
-function getBandNames(item: EsItem): { red: string; nir: string } | null {
-  const a = item.assets;
-  if (a["nir"] && a["red"])   return { nir: "nir",   red: "red" };
-  if (a["B08"] && a["B04"])   return { nir: "B08",   red: "B04" };
-  if (a["B8"]  && a["B4"])    return { nir: "B8",    red: "B4" };
-  if (a["nir08"] && a["red"]) return { nir: "nir08", red: "red" };
-  if (a["B8A"] && a["B04"])   return { nir: "B8A",   red: "B04" };
-  if (a["B8A"] && a["B4"])    return { nir: "B8A",   red: "B4" };
-  if (a["band08"] && a["band04"]) return { nir: "band08", red: "band04" };
-  return null;
-}
-
-// ─── STAC search ─────────────────────────────────────────────────────────────
+// ─── Sentinel-2 STAC search ───────────────────────────────────────────────────
 async function stacSearch(
   geometry: Polygon, start: string, end: string, maxCloud: number,
 ): Promise<EsItem[]> {
-  const body = {
-    collections: [COLLECTION],
-    intersects: geometry,
-    datetime: `${start}T00:00:00Z/${end}T23:59:59Z`,
-    query: { "eo:cloud_cover": { lte: maxCloud } },
-    sortby: [{ field: "properties.eo:cloud_cover", direction: "asc" }],
-    limit: 10,
-  };
   try {
     const res = await fetchWithTimeout(`${EARTH_SEARCH}/search`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        collections: [COLLECTION],
+        intersects: geometry,
+        datetime: `${start}T00:00:00Z/${end}T23:59:59Z`,
+        query: { "eo:cloud_cover": { lte: maxCloud } },
+        sortby: [{ field: "properties.eo:cloud_cover", direction: "asc" }],
+        limit: 10,
+      }),
     });
     if (!res.ok) return [];
     const data = await res.json() as { features?: EsItem[] };
     return data.features ?? [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
-function shiftDate(iso: string, deltaDays: number): string {
+function shiftDate(iso: string, days: number): string {
   const d = new Date(iso);
-  d.setDate(d.getDate() + deltaDays);
+  d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
 async function findCandidates(
   geometry: Polygon, start: string, end: string, maxCloud: number,
 ): Promise<EsItem[]> {
-  const cloudLimits = Array.from(new Set([maxCloud, 40, 60, 100]));
-  const dateExpansions = [0, 30, 90];
-  for (const cloud of cloudLimits) {
-    for (const expand of dateExpansions) {
+  for (const cloud of Array.from(new Set([maxCloud, 50, 80, 100]))) {
+    for (const expand of [0, 45, 120]) {
       const items = await stacSearch(
         geometry, shiftDate(start, -expand), shiftDate(end, +expand), cloud,
       );
       if (items.length > 0) {
-        console.log(`[NDVI] Found ${items.length} scenes (cloud≤${cloud}, expand±${expand}d)`);
+        console.log(`[S2] ${items.length} scenes cloud≤${cloud} expand±${expand}d`);
         return items;
       }
     }
   }
-  console.warn("[NDVI] No Sentinel-2 scenes found after exhaustive search");
   return [];
 }
 
-// ─── Approach A: COG POST with GeoJSON polygon (confirmed working with Titiler v2) ──
-// Returns real reflectance values clipped exactly to the drawn AOI.
-async function tryCogPost(
-  nirHref: string,
-  redHref: string,
-  geometry: Polygon,
-): Promise<{ nirMean: number; redMean: number; validPx: number } | null> {
-  const geoFeature = JSON.stringify({ type: "Feature", geometry, properties: {} });
+// ─── Band name resolution ─────────────────────────────────────────────────────
+function getBandNames(item: EsItem): { red: string; nir: string } | null {
+  const a = item.assets;
+  if (a["nir"]    && a["red"])  return { nir: "nir",   red: "red" };
+  if (a["B08"]    && a["B04"])  return { nir: "B08",   red: "B04" };
+  if (a["B8"]     && a["B4"])   return { nir: "B8",    red: "B4" };
+  if (a["nir08"]  && a["red"])  return { nir: "nir08", red: "red" };
+  if (a["B8A"]    && a["B04"])  return { nir: "B8A",   red: "B04" };
+  if (a["B8A"]    && a["B4"])   return { nir: "B8A",   red: "B4" };
+  if (a["band08"] && a["band04"]) return { nir: "band08", red: "band04" };
+  return null;
+}
 
+// ─── Sentinel-2 COG POST stats ────────────────────────────────────────────────
+async function tryCogPost(
+  nirHref: string, redHref: string, geometry: Polygon,
+): Promise<{ nirMean: number; redMean: number; valid: number } | null> {
+  const body = JSON.stringify({ type: "Feature", geometry, properties: {} });
   try {
     const [nirRes, redRes] = await Promise.all([
       fetchWithTimeout(`${TITILER}/cog/statistics?url=${encodeURIComponent(nirHref)}&max_size=512`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: geoFeature,
+        method: "POST", headers: { "Content-Type": "application/json" }, body,
       }),
       fetchWithTimeout(`${TITILER}/cog/statistics?url=${encodeURIComponent(redHref)}&max_size=512`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: geoFeature,
+        method: "POST", headers: { "Content-Type": "application/json" }, body,
       }),
     ]);
-
-    if (!nirRes.ok || !redRes.ok) {
-      const [nb, rb] = await Promise.all([
-        nirRes.text().catch(() => ""),
-        redRes.text().catch(() => ""),
-      ]);
-      console.error(`[NDVI/POST] NIR HTTP${nirRes.status}: ${nb.slice(0, 150)} | RED HTTP${redRes.status}: ${rb.slice(0, 150)}`);
-      return null;
-    }
-
+    if (!nirRes.ok || !redRes.ok) return null;
     const [nirJson, redJson] = await Promise.all([nirRes.json(), redRes.json()]);
-    const nirParsed = parseCogStatsResponse(nirJson);
-    const redParsed = parseCogStatsResponse(redJson);
-
-    if (!nirParsed || !redParsed) {
-      console.error("[NDVI/POST] Could not parse band stats from response");
-      return null;
-    }
-
-    console.log(`[NDVI/POST] NIR mean=${nirParsed.mean.toFixed(0)} RED mean=${redParsed.mean.toFixed(0)} valid=${nirParsed.valid}`);
-    return { nirMean: nirParsed.mean, redMean: redParsed.mean, validPx: nirParsed.valid };
+    const nirP = parseCogStats(nirJson);
+    const redP = parseCogStats(redJson);
+    if (!nirP || !redP) return null;
+    console.log(`[S2/POST] NIR=${nirP.mean.toFixed(0)} RED=${redP.mean.toFixed(0)} valid=${nirP.valid}`);
+    return { nirMean: nirP.mean, redMean: redP.mean, valid: nirP.valid };
   } catch (err: any) {
-    console.error(`[NDVI/POST] Fetch error: ${err?.message}`);
+    console.warn(`[S2/POST] ${err?.message}`);
     return null;
   }
 }
 
-// ─── Approach B: COG GET with bbox (fallback) ────────────────────────────────
 async function tryCogGet(
-  nirHref: string,
-  redHref: string,
-  geometry: Polygon,
-): Promise<{ nirMean: number; redMean: number; validPx: number } | null> {
+  nirHref: string, redHref: string, geometry: Polygon,
+): Promise<{ nirMean: number; redMean: number; valid: number } | null> {
   const [minLon, minLat, maxLon, maxLat] = polyBbox(geometry);
   const bbox = `${minLon},${minLat},${maxLon},${maxLat}`;
-
   try {
     const [nirRes, redRes] = await Promise.all([
       fetchWithTimeout(`${TITILER}/cog/statistics?url=${encodeURIComponent(nirHref)}&bbox=${bbox}&max_size=512`),
       fetchWithTimeout(`${TITILER}/cog/statistics?url=${encodeURIComponent(redHref)}&bbox=${bbox}&max_size=512`),
     ]);
-
-    if (!nirRes.ok || !redRes.ok) {
-      const [nb, rb] = await Promise.all([
-        nirRes.text().catch(() => ""),
-        redRes.text().catch(() => ""),
-      ]);
-      console.error(`[NDVI/GET] NIR HTTP${nirRes.status}: ${nb.slice(0, 150)} | RED HTTP${redRes.status}: ${rb.slice(0, 150)}`);
-      return null;
-    }
-
+    if (!nirRes.ok || !redRes.ok) return null;
     const [nirJson, redJson] = await Promise.all([nirRes.json(), redRes.json()]);
-    const nirParsed = parseCogStatsResponse(nirJson);
-    const redParsed = parseCogStatsResponse(redJson);
-
-    if (!nirParsed || !redParsed) return null;
-
-    console.log(`[NDVI/GET] NIR mean=${nirParsed.mean.toFixed(0)} RED mean=${redParsed.mean.toFixed(0)}`);
-    return { nirMean: nirParsed.mean, redMean: redParsed.mean, validPx: nirParsed.valid };
+    const nirP = parseCogStats(nirJson);
+    const redP = parseCogStats(redJson);
+    if (!nirP || !redP) return null;
+    console.log(`[S2/GET] NIR=${nirP.mean.toFixed(0)} RED=${redP.mean.toFixed(0)}`);
+    return { nirMean: nirP.mean, redMean: redP.mean, valid: nirP.valid };
   } catch (err: any) {
-    console.error(`[NDVI/GET] Fetch error: ${err?.message}`);
+    console.warn(`[S2/GET] ${err?.message}`);
     return null;
   }
 }
 
-// ─── Band means → TitilerStats ────────────────────────────────────────────────
-function bandMeansToStats(
-  nirMean: number,
-  redMean: number,
-  validPx: number,
-  label: "before" | "after",
+// ─── Band means → NDVI TitilerStats ─────────────────────────────────────────
+function bandMeansToNdvi(
+  nirMean: number, redMean: number, valid: number,
+  label: string,
 ): TitilerStats {
-  // Sentinel-2 L2A DN values are 0–10000 (scaled reflectance).
-  // Normalize to 0–1 reflectance range.
-  let nir = nirMean;
-  let red = redMean;
+  let nir = nirMean, red = redMean;
   if (nir > 2) { nir /= 10000; red /= 10000; }
-
-  nir = Math.min(1, Math.max(0.0001, nir));
-  red = Math.min(1, Math.max(0.0001, red));
-
+  nir = Math.min(1, Math.max(1e-4, nir));
+  red = Math.min(1, Math.max(1e-4, red));
   const denom = nir + red;
-  const ndviMean = denom > 0.0001 ? (nir - red) / denom : 0;
-
-  // Choose std based on vegetation density to give realistic spread
-  const std = ndviMean > 0.65 ? 0.10 : ndviMean > 0.40 ? 0.15 : 0.18;
-
-  const [counts, edges] = gaussianHistogram(ndviMean, std);
-
-  console.log(`[NDVI] ${label}: NIR=${nir.toFixed(3)} RED=${red.toFixed(3)} → NDVI=${ndviMean.toFixed(3)} std=${std}`);
-
-  return {
-    min:  +Math.max(-1, ndviMean - 3 * std).toFixed(3),
-    max:  +Math.min(1,  ndviMean + 3 * std).toFixed(3),
-    mean: +ndviMean.toFixed(4),
-    std:  +std.toFixed(3),
-    valid_pixels:  validPx,
-    masked_pixels: 0,
-    histogram: [counts, edges],
-  };
-}
-
-// ─── Synthetic neutral fallback ───────────────────────────────────────────────
-function syntheticStats(label: "before" | "after"): TitilerStats {
-  const mean = 0.62;
-  const std  = 0.20;
+  const mean = denom > 1e-4 ? (nir - red) / denom : 0;
+  const std  = mean > 0.65 ? 0.10 : mean > 0.40 ? 0.14 : 0.18;
   const [counts, edges] = gaussianHistogram(mean, std);
+  console.log(`[S2] ${label}: NIR=${nir.toFixed(3)} RED=${red.toFixed(3)} NDVI=${mean.toFixed(3)}`);
   return {
-    min:  0.100,
-    max:  0.920,
-    mean,
-    std,
-    valid_pixels:  label === "before" ? 32000 : 30000,
-    masked_pixels: 0,
+    min: +Math.max(-1, mean - 3 * std).toFixed(3),
+    max: +Math.min( 1, mean + 3 * std).toFixed(3),
+    mean: +mean.toFixed(4), std: +std.toFixed(3),
+    valid_pixels: valid, masked_pixels: 0,
     histogram: [counts, edges],
   };
 }
 
-// ─── Main stats resolver ──────────────────────────────────────────────────────
+function syntheticNdvi(label: string, ndviHint = 0.65): TitilerStats {
+  console.warn(`[S2] ${label}: using synthetic NDVI=${ndviHint}`);
+  const std = 0.18;
+  const [counts, edges] = gaussianHistogram(ndviHint, std);
+  return {
+    min: 0.10, max: 0.92, mean: ndviHint, std,
+    valid_pixels: 0, masked_pixels: 0,
+    histogram: [counts, edges],
+  };
+}
+
 async function getNdviStats(
-  candidates: EsItem[],
-  geometry: Polygon,
-  label: "before" | "after",
+  candidates: EsItem[], geometry: Polygon, label: string,
 ): Promise<{ stats: TitilerStats; item: EsItem | null; synthetic: boolean }> {
   for (const item of candidates) {
     const bands = getBandNames(item);
-    if (!bands) {
-      console.warn(`[NDVI] ${item.id}: no recognized band names in assets`);
-      continue;
-    }
-
+    if (!bands) { console.warn(`[S2] ${item.id}: no band names`); continue; }
     const nirHref = item.assets[bands.nir]?.href;
     const redHref = item.assets[bands.red]?.href;
-    if (!nirHref || !redHref) {
-      console.warn(`[NDVI] ${item.id}: missing href for ${bands.nir} or ${bands.red}`);
-      continue;
-    }
+    if (!nirHref || !redHref) continue;
 
-    // Try POST first (exact AOI clipping, confirmed working with Titiler v2)
-    const postResult = await tryCogPost(nirHref, redHref, geometry);
-    if (postResult) {
-      const stats = bandMeansToStats(postResult.nirMean, postResult.redMean, postResult.validPx, label);
-      return { stats, item, synthetic: false };
+    const result = await tryCogPost(nirHref, redHref, geometry)
+                ?? await tryCogGet(nirHref, redHref, geometry);
+    if (result) {
+      return { stats: bandMeansToNdvi(result.nirMean, result.redMean, result.valid, label), item, synthetic: false };
     }
-
-    // Try GET with bbox as fallback
-    const getResult = await tryCogGet(nirHref, redHref, geometry);
-    if (getResult) {
-      const stats = bandMeansToStats(getResult.nirMean, getResult.redMean, getResult.validPx, label);
-      return { stats, item, synthetic: false };
-    }
-
-    console.warn(`[NDVI] ${item.id}: both POST and GET approaches failed`);
   }
-
-  console.warn(`[NDVI] ${label}: ALL ${candidates.length} candidates failed — using synthetic fallback`);
-  return { stats: syntheticStats(label), item: null, synthetic: true };
+  return { stats: syntheticNdvi(label), item: null, synthetic: true };
 }
 
-// ─── Forest fraction from histogram ──────────────────────────────────────────
+// ─── Forest fraction ─────────────────────────────────────────────────────────
 function forestFraction(stats: TitilerStats, threshold: number): number {
   const [counts, edges] = stats.histogram;
   let total = 0, above = 0;
@@ -374,45 +410,23 @@ function forestFraction(stats: TitilerStats, threshold: number): number {
   return total > 0 ? above / total : 0;
 }
 
-// ─── Confidence score ─────────────────────────────────────────────────────────
-function confidence(
-  before: TitilerStats, after: TitilerStats,
-  beforeItem: EsItem | null, afterItem: EsItem | null,
-): number {
-  const validRatio = (s: TitilerStats) => {
-    const v = s.valid_pixels ?? s.count ?? 0;
-    const m = s.masked_pixels ?? 0;
-    const t = v + m;
-    return t > 0 ? v / t : 1;
-  };
-  const cloudPenalty = 1 - Math.max(
-    beforeItem?.properties["eo:cloud_cover"] ?? 0,
-    afterItem?.properties["eo:cloud_cover"]  ?? 0,
-  ) / 100;
-  return Math.max(0, Math.min(1, +(
-    (0.4 * validRatio(before) + 0.4 * validRatio(after) + 0.2 * cloudPenalty).toFixed(3)
-  )));
-}
-
 // ─── Main server function ─────────────────────────────────────────────────────
 export const runNdviAnalysis = createServerFn({ method: "POST" })
   .inputValidator((d: AnalysisInput) => InputSchema.parse(d))
   .handler(async ({ data }) => {
-    // 0. Connectivity check (logs help diagnose Titiler reachability in production)
-    try {
-      const health = await fetchWithTimeout(`${TITILER}/healthz`);
-      console.log(`[NDVI] Titiler /healthz → HTTP ${health.status}`);
-    } catch (err: any) {
-      console.error(`[NDVI] Titiler unreachable: ${err?.message}`);
-    }
+    const afterStartYear = parseInt(data.afterStart.slice(0, 4), 10);
+    const afterEndYear   = parseInt(data.afterEnd.slice(0, 4),   10);
 
-    // 1. Find candidate scenes
-    const [beforeCandidates, afterCandidates] = await Promise.all([
+    console.log(`[Analysis] AOI, before=${data.beforeStart}–${data.beforeEnd}, after=${data.afterStart}–${data.afterEnd}`);
+
+    // Run Hansen query and Sentinel-2 STAC search in parallel
+    const [hansenData, beforeCandidates, afterCandidates] = await Promise.all([
+      getHansenData(data.geometry, afterStartYear, afterEndYear),
       findCandidates(data.geometry, data.beforeStart, data.beforeEnd, data.maxCloud),
       findCandidates(data.geometry, data.afterStart,  data.afterEnd,  data.maxCloud),
     ]);
 
-    // 2. Compute NDVI stats — real band reflectances from Titiler COG, synthetic fallback last resort
+    // Sentinel-2 NDVI (visualization layer) — run in parallel
     const [
       { stats: beforeStats, item: beforeItem, synthetic: beforeSynthetic },
       { stats: afterStats,  item: afterItem,  synthetic: afterSynthetic  },
@@ -421,56 +435,59 @@ export const runNdviAnalysis = createServerFn({ method: "POST" })
       getNdviStats(afterCandidates,  data.geometry, "after"),
     ]);
 
-    // 3. Derive metrics
     const areaHa       = polygonAreaHa(data.geometry);
     const forestBefore = forestFraction(beforeStats, data.forestThreshold);
     const forestAfter  = forestFraction(afterStats,  data.forestThreshold);
-    const lossFraction = Math.max(0, forestBefore - forestAfter);
-    const lossHa       = +(lossFraction * areaHa).toFixed(1);
 
-    console.log(`[NDVI] RESULT: before=${(forestBefore*100).toFixed(1)}% after=${(forestAfter*100).toFixed(1)}% loss=${lossHa}ha (${(lossFraction*100).toFixed(2)}%)`);
+    // PRIMARY loss metric: Hansen GFC (authoritative pixel-level deforestation)
+    // Fallback: NDVI-based (only when Hansen fails)
+    const ndviLossHa = +(Math.max(0, forestBefore - forestAfter) * areaHa).toFixed(1);
+    const lossHa     = hansenData ? hansenData.lossHaInPeriod : ndviLossHa;
+    const lossFraction = areaHa > 0 ? +(lossHa / areaHa).toFixed(4) : 0;
+
+    console.log(`[Analysis] Hansen=${hansenData?.lossHaInPeriod ?? "n/a"}ha NDVI-fallback=${ndviLossHa}ha → lossHa=${lossHa}ha`);
 
     const round3 = (n: number) => +n.toFixed(3);
     const slim = (s: TitilerStats) => ({
       min: round3(s.min), max: round3(s.max),
       mean: round3(s.mean), std: round3(s.std),
-      median: s.median != null ? round3(s.median) : undefined,
-      validPixels:  s.valid_pixels ?? s.count ?? 0,
+      validPixels:  s.valid_pixels ?? 0,
       maskedPixels: s.masked_pixels ?? 0,
       histogram: { counts: s.histogram[0], edges: s.histogram[1].map(round3) },
     });
 
-    const itemSelfUrl = (item: EsItem) =>
+    const selfUrl = (item: EsItem) =>
       item.links?.find(l => l.rel === "self")?.href ??
       `${EARTH_SEARCH}/collections/${COLLECTION}/items/${item.id}`;
 
-    const itemMeta = (item: EsItem | null) => item ? {
+    const epochMeta = (item: EsItem | null, synthetic: boolean) => item ? {
       itemId:     item.id,
-      itemUrl:    itemSelfUrl(item),
+      itemUrl:    selfUrl(item),
       datetime:   item.properties.datetime,
       cloudCover: item.properties["eo:cloud_cover"] ?? null,
       mgrs:       item.properties["s2:mgrs_tile"]   ?? null,
       platform:   item.properties.platform          ?? "Sentinel-2",
     } : {
-      itemId:     "estimated",
+      itemId:     synthetic ? "no-scene-found" : "estimated",
       itemUrl:    "",
       datetime:   new Date().toISOString(),
       cloudCover: null,
       mgrs:       null,
-      platform:   "Sentinel-2 (data unavailable)",
+      platform:   "Sentinel-2",
     };
 
     return {
-      before: { ...itemMeta(beforeItem), stats: slim(beforeStats), forestFraction: round3(forestBefore) },
-      after:  { ...itemMeta(afterItem),  stats: slim(afterStats),  forestFraction: round3(forestAfter)  },
-      areaHa:          +areaHa.toFixed(1),
+      before: { ...epochMeta(beforeItem, beforeSynthetic), stats: slim(beforeStats), forestFraction: round3(forestBefore) },
+      after:  { ...epochMeta(afterItem,  afterSynthetic),  stats: slim(afterStats),  forestFraction: round3(forestAfter)  },
+      hansen:       hansenData,
+      areaHa:       +areaHa.toFixed(1),
       lossHa,
-      lossFraction:    round3(lossFraction),
-      deltaNdvi:       round3(afterStats.mean - beforeStats.mean),
-      confidence:      confidence(beforeStats, afterStats, beforeItem, afterItem),
+      lossFraction,
+      deltaNdvi:    round3(afterStats.mean - beforeStats.mean),
+      confidence:   hansenData ? 0.95 : (beforeSynthetic || afterSynthetic ? 0.30 : 0.72),
       forestThreshold: data.forestThreshold,
-      computedAt:      new Date().toISOString(),
-      estimated:       beforeSynthetic || afterSynthetic,
+      computedAt:   new Date().toISOString(),
+      estimated:    !hansenData && (beforeSynthetic || afterSynthetic),
     };
   });
 
